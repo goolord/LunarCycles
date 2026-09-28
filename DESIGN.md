@@ -10,30 +10,49 @@ Energy 2 / rhythm 2 / motion 2. The circular score is the focal point;
 supporting controls are quiet. Playback is the reason for motion. There are
 no entrance animations, ambient pulses, or decorative transitions.
 
+The centre of the circular score is a faint moon that goes through its
+phases once per cycle: new at twelve o'clock, full at six. It is the only
+decorative mark in the app, and it is drawn from the playhead's position.
+
 The design uses the language of musical notation and instrument controls:
 cycle divisions, onset marks, concentric track bands, and rotary parameters.
 The identity comes from the actual pattern data, rather than an illustration.
 
 ## Tokens
 
+A harbour at night. Three depths of grey-blue slate separate the workspace,
+the instrument surfaces and the controls, so a pane never blends into the
+window behind it and a button never blends into its pane. The slate is kept
+low in chroma and leans toward sea rather than violet; colour belongs to the
+tracks and the moon.
+
 | Token | Value | Purpose |
 | --- | --- | --- |
-| Deep water | `#182C32` | Workspace, recessed editing surfaces |
-| Instrument surface | `#213940` | Pane surfaces |
-| Chalk | `#E2EBE6` | Primary text and fourth track |
-| Sea glass | `#9CD3BC` | First track, strings, success |
-| Lilac | `#B5B9E8` | Second track and Tidal functions |
-| Apricot | `#F0B879` | Transport, playheads, numeric literals, third track |
+| Water | `#080F15` | Workspace, gutters, recessed wells (timeline, grid, code, inputs) |
+| Hull | `#172430` | Pane surfaces |
+| Cap | `#2B3D50` | Raised controls; hover `#364C62` |
+| Rim | `#7892A9` | Control borders, 4.9:1 against Hull |
+| Moonlight | `#E8EDF1` | Primary text |
+| Mist | `#9FB0BF` | Secondary text, 7.1:1 on Hull |
+| Moon | `#F2D27A` | Transport, playheads, focus, a soloed track |
 
-Supporting neutrals: `#A5B8B8` for secondary text, `#435E64` for rules,
-and `#2D4950` for controls. Errors use `#F5A2A6` only when needed.
-Track colors repeat after four tracks; names and channel identifiers also
-identify them, so color is never the only means of identification.
+Tracks are sea glass `#7FD1B2`, harbour blue `#82BCEB`, buoy coral `#F0916F`
+and kelp `#BCD072`, each above 6.5:1 on Hull. Sea glass, harbour blue and
+coral also colour strings, functions and numbers in the code. Amber `#FFBE66` lights a muted
+track; `#FF7B7B` is kept for errors. Track colours repeat after four tracks;
+names and channel identifiers also identify them, so colour is never the
+only means of identification.
 
-Input Sans Regular is the interface face: its open forms and differentiated
-characters suit small, closely spaced musical controls. Input Mono Regular
-is reserved for expressions, channel identifiers, and exact parameter values.
-Installed Noto Sans and DejaVu Sans Mono provide fallbacks. Fonts are resolved
+Controls follow one rule: at rest a button is a Cap with a Rim; when it
+turns something on (mute, solo, a running modulation) it fills with that
+colour and its label turns dark, as a lit key on a hardware sequencer does.
+Only the maximize and track-name buttons stay borderless.
+
+Input Sans Condensed is the interface face: its open forms and
+differentiated characters suit small, closely spaced musical controls, and
+its narrower width keeps it clearly apart from Input Mono, which is reserved
+for expressions, channel identifiers, and exact parameter values. Installed
+Noto Sans and DejaVu Sans Mono provide fallbacks. Fonts are resolved
 locally, with no runtime network dependency.
 
 Type scale: 11–12 for secondary detail, 13–14 for controls and code, 15 for
@@ -74,7 +93,7 @@ changes its sample or note. The grid claims these keys so Space does not also
 start the transport.
 
 Parameter knobs are 56 pixels across and accept arrow keys as well as drag
-and wheel input. Focus has a visible apricot outline. Function menus expose
+and wheel input. Focus has a visible moon-yellow outline. Function menus expose
 Move earlier and Move later as alternatives to dragging. Euclidean parameters
 remain editable through numeric fields as alternatives to ring gestures.
 
@@ -99,9 +118,9 @@ use adaptive path tessellation rather than visibly polygonal primitives.
   desktop window without runtime errors.
 - PASS, visual review: rendered at 1600 × 980, 440 × 820, and 400 × 600 logical
   pixels. The minimum-size editor scrolls vertically, with all view tabs visible.
-- PASS, text contrast checks: chalk on the instrument surface is 10.01:1;
-  secondary text on that surface is 5.89:1; colored track labels on that
-  surface are at least 6.42:1.
+- PASS, text contrast checks: primary text on the pane surface is 13.4:1;
+  secondary text is 7.1:1; track colours are at least 6.7:1; control rims
+  are 4.9:1 against the pane (WCAG 1.4.11 asks 3:1).
 - PASS, both Cabal test suites: step painting changes the pattern; keyboard
   input toggles a step; dragging and arrow keys change gain; dragging and menu
   actions reorder functions; adding a function updates the chain; Mini converts
@@ -137,3 +156,15 @@ measured against a square inside the clear inner disc. When all three lines
 would become too small, only the cycle count is shown; tempo remains available
 in the transport. This keeps the text separate from the musical events at
 every pane size.
+
+## Pane geometry
+
+The pane grid decides where each pane is, and drags a pane by a handle over
+its title at that position. Each pane is therefore held to exactly the rect
+the grid gives it; content that wants more room scrolls or clips inside the
+pane instead of pushing its neighbours out of place. The grid's margin sits
+outside the grid, since the grid lays panes out over its whole rect. A pane
+too narrow for its header controls shows only its title and maximize
+button, so nothing spills over the next pane's title. Reset layout skips
+saving on the frame it is pressed, when the old arrangement is still on
+screen.

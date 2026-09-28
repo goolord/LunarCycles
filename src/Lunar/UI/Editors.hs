@@ -54,7 +54,7 @@ stepGrid col pitched beat steps = do
               let cx = x + fromIntegral i * cw
                   shaded = odd (i `div` 4)
                   cell = Rect (cx + 2) (y + 23) (max 1 (cw - 4)) (h - 28)
-              when shaded $ drawRect (Rect cx y cw h) (withAlpha (themeSeparator th) 0.35)
+              when shaded $ drawRect (Rect cx y cw h) (withAlpha (themeSeparator th) 0.45)
               when (cw >= 22 || i `mod` 4 == 0) $
                 drawTextWith smallFont (V2 (cx + cw / 2) (y + 11)) AlignCenter AlignMiddle (T.pack (show (i + 1))) (themeMuted th)
               case s of
@@ -62,8 +62,9 @@ stepGrid col pitched beat steps = do
                   drawRoundedRect cell 3 (withAlpha col (if i == current then 1 else 0.8))
                   when (v /= 0 || pitched) $
                     drawTextWith monoFont (V2 (cx + cw / 2) (y + 23 + (h - 28) / 2)) AlignCenter AlignMiddle (T.pack (show v)) (themeOnAccent th)
-                Nothing ->
-                  drawRoundedRect cell 4 (withAlpha (themeSeparator th) (if i == current then 0.9 else 0.5))
+                Nothing -> do
+                  drawRoundedRect cell 3 (withAlpha (styleBg (themeButton th)) (if i == current then 1 else 0.7))
+                  drawStrokeRoundedRect cell 3 1 (withAlpha (styleBorder (themeButton th)) 0.35)
               when (hoverCell == Just i) $ drawStrokeRoundedRect cell 4 1.5 (styleFg (themeInput th))
               when (cdcFocused cdc && min (n - 1) cursor == i) $ drawStrokeRoundedRect cell 3 2 (themeFocusRing th)
               when (i == current) $ drawRect (Rect (cx + 2) (y + h - 3) (cw - 4) 2) (themeAccent th)

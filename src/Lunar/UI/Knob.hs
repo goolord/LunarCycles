@@ -76,7 +76,7 @@ paramKnob col p base sweep live = do
               | otherwise = styleBg (themeButton th)
             active = abs (base - paramDefault p) > 1e-6
             line = (P.stroke 3) {P.strokeCap = P.RoundCap}
-        drawStrokePathWith line (P.arc c r start travel) (P.Solid (themeSeparator th))
+        drawStrokePathWith line (P.arc c r start travel) (P.Solid (withAlpha (styleBorder (themeButton th)) 0.4))
         case sweep of
           Just (a, b) ->
             drawStrokePathWith

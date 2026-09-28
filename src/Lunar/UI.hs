@@ -136,6 +136,7 @@ lunarView env = styled (const lunarTheme) $ do
   (compactPane, setCompactPane) <- useState PaneEditor
   startLayout <- liftIO (readIORef (envSavedLayout env))
   paneRects <- liftIO (newIORef [])
+  resetNow <- liftIO (newIORef False)
   pointerHeld <- heldIn MouseLeft <$> askInput
   let compiled = dCompiled derived
       tracks = songTracks song
@@ -166,9 +167,9 @@ lunarView env = styled (const lunarTheme) $ do
         ]
       frame = paneFrame (ww >= 1100)
       viewPane pid pctx = case paneKind pid of
-        Nothing -> frame pctx "Empty" (pure ()) (muted "This pane has nothing in it. Close it with the × in its corner.")
+        Nothing -> frame pctx "Empty" 0 (pure ()) (muted "This pane has nothing in it. Close it with the × in its corner.")
         Just kind -> case kind of
-          PaneRing -> frame pctx (paneTitle kind) (pure ()) $ do
+          PaneRing -> frame pctx (paneTitle kind) 0 (pure ()) $ do
             let Rect _ _ pw ph = pgcRect pctx
                 beside = pw >= 320 && pw > ph * 1.25
                 scoreView = do
@@ -194,6 +195,7 @@ lunarView env = styled (const lunarTheme) $ do
             frame
               pctx
               (paneTitle kind)
+              300
               ( do
                   let pages = [1, 2, 4, 8]
                   i <- selectField 116 (map (\p -> tshow p <> (if p == 1 then " cycle" else " cycles")) pages) (fromMaybe 2 (elemIndex pageCycles pages))
@@ -208,6 +210,7 @@ lunarView env = styled (const lunarTheme) $ do
             frame
               pctx
               (paneTitle kind)
+              250
               ( whenM (buttonWith (fontSize 13 . alignMid . minH 36) "+ Track") $ do
                   let tid = nextTrackId song
                   edit (\s -> s {songTracks = songTracks s <> [newTrack tid ("track " <> tshow tid) "cp" (Steps (replicate 8 Nothing))]})
@@ -215,7 +218,7 @@ lunarView env = styled (const lunarTheme) $ do
               )
               $ trackList th (rectW (pgcRect pctx)) selected selectTrack silenced edit compiled
           PaneEditor ->
-            frame pctx (paneTitle kind) (pure ()) $
+            frame pctx (paneTitle kind) 0 (pure ()) $
               case [(i, c) | (i, c) <- zip [0 ..] compiled, Just (trackId (cTrack c)) == selected] of
                 (i, c) : _ -> trackEditor th i now editorTab setEditorTab (silenced (cTrack c)) edit c
                 [] -> muted "Add a track to edit it here."
@@ -223,6 +226,7 @@ lunarView env = styled (const lunarTheme) $ do
             frame
               pctx
               (paneTitle kind)
+              280
               ( do
                   (copied, setCopied) <- useFlag False
                   scope $ when copied $ labelWith (fontTone Success . fontSize 12) "Copied"
@@ -235,17 +239,20 @@ lunarView env = styled (const lunarTheme) $ do
         forgetLayout
         writeIORef (envStartLayout env) Nothing
         writeIORef (envSavedLayout env) Nothing
+        writeIORef resetNow True
       setLayoutGen (layoutGen + 1)
     when (ww < 1100) $ rowWith (padXY 0 4 . tight . fillW) $ do
       next <- tabBarConfigured defaultTabsConfig {tabsStyle = TabUnderline} compactPane
         [tab k (paneTitle k) () | k <- [PaneRing, PaneTimeline, PaneTracks, PaneEditor, PaneCode]]
       when (next /= compactPane) (setCompactPane next)
+    -- The margin sits outside the grid: the grid lays its panes out over its
+    -- whole rect, padding included, and each pane is held to that layout.
     gridResp <-
       withKey (layoutGen, ww < 1100, if ww < 1100 then fromEnum compactPane else 0) $
-        styled gridTheme $
+        styled gridTheme $ columnWith (fillW . fillH . padAll 8 . tight) $
           paneGrid
             defaultPaneGridConfig
-              { pgLayout = fillW . fillH . padAll 8
+              { pgLayout = fillW . fillH
               , pgSpacing = gridLine
               , pgLeeway = gridLeeway
               , pgEdgeBand = 16
@@ -259,8 +266,11 @@ lunarView env = styled (const lunarTheme) $ do
               }
     -- Save the arrangement once a drag or resize has let go, and never
     -- while a pane is maximized over the others.
+    -- The grid still shows the old arrangement on the frame Reset is
+    -- pressed; saving it would undo the reset.
     rects <- liftIO (readIORef paneRects)
-    unless (ww < 1100 || pointerHeld || pgrMaximizedPane gridResp /= 0 || length rects /= pgrPaneCount gridResp || any (\(_, Rect _ _ w h) -> w <= 0 || h <= 0) rects) $
+    resetting <- liftIO (readIORef resetNow)
+    unless (resetting || ww < 1100 || pointerHeld || pgrMaximizedPane gridResp /= 0 || length rects /= pgrPaneCount gridResp || any (\(_, Rect _ _ w h) -> w <= 0 || h <= 0) rects) $
       forM_ (layoutFromRects gridGutter rects) $ \layout -> liftIO $ do
         saved <- readIORef (envSavedLayout env)
         when (saved /= Just layout) $ do
@@ -278,20 +288,27 @@ lunarView env = styled (const lunarTheme) $ do
 
 -- | A pane's frame: a title bar to drag it by, the pane's own controls and
 -- a maximize button, over its body.
-paneFrame :: Bool -> PaneGridCtx -> Text -> NanoUI () -> NanoUI () -> NanoUI PaneView
-paneFrame docked pctx title controls body = do
-  styled (const lunarTheme) $ panelWith (grow . padXY 16 12 . gap 12) $ do
+paneFrame :: Bool -> PaneGridCtx -> Text -> Float -> NanoUI () -> NanoUI () -> NanoUI PaneView
+paneFrame docked pctx title room controls body = do
+  let Rect x y w h = pgcRect pctx
+      -- Hold the pane to the rect the grid gave it. Content that wants more
+      -- room would otherwise grow the pane and squeeze its neighbours, and
+      -- every title would be drawn away from the handle the grid drags by.
+      sized = if w > 0 && h > 0 then fixedWH w h else grow
+  styled (const lunarTheme) $ panelWith (sized . padXY 16 12 . gap 12) $ do
     when (docked || title `notElem` ["Editor", "Cycle"]) $ rowWith (tight . gap 8 . fillW . alignMid . fixedH 36) $ do
       withCursorShape UiCursorGrab $ rowWith (tight . gap 8 . alignMid) $ do
         labelWith (fontMedium . fontSize 15 . alignMid) title
       flex
-      rowWith (tight . gap 6 . alignMid) controls
+      -- A pane narrower than its controls need keeps only its title and
+      -- maximize button, so the controls never spill over the next pane's
+      -- title.
+      when (w <= 0 || w >= room) $ rowWith (tight . gap 6 . alignMid) controls
       when docked $ do
         maxResp <- styled subtle (buttonWith' (fixedWH 36 36 . alignMid) (if pgcMaximized pctx then "⤡" else "⤢"))
         tooltip maxResp (if pgcMaximized pctx then "Restore the layout" else "Fill the window with this pane")
         when (respClicked maxResp) (if pgcMaximized pctx then pgcRestore pctx else pgcMaximize pctx)
     columnWith (tight . fillW . fillH) body
-  let Rect x y _ _ = pgcRect pctx
   pure
     PaneView
       { pvTitle = title
@@ -422,25 +439,31 @@ trackList th paneWidth selected selectTrack silenced edit compiled =
             update f = edit (mapTrack tid f)
             surface =
               if isSel
-                then panelStyle (background (lerpColor (styleBg (themePanel th)) col 0.12) . borderWidth 1 . borderColor (withAlpha col 0.6) . cornerRadius 6)
-                else panelStyle (background (themeWindow th) . borderWidth 0 . cornerRadius 6)
+                then panelStyle (background (lerpColor (themeWindow th) col 0.14) . borderWidth 1 . borderColor (withAlpha col 0.75) . cornerRadius 6)
+                else panelStyle (background (themeWindow th) . borderWidth 1 . borderColor (themeSeparator th) . cornerRadius 6)
+            strip = if silenced t then withAlpha col 0.3 else col
         nameLabel <- fitText 14 (max 24 (paneWidth - 210)) (trackName t)
-        (_, area) <- styled surface $ panelWith (fillW . tight) $ withCursorShape UiCursorPointer $ mouseArea (fillW . padXY 10 10 . gap 6) $ do
-          rowWith (tight . gap 8 . fillW . alignMid) $ do
-            labelWith (fontMono . fontSize 12 . fontColor col . alignMid) ("d" <> tshow (cChannel c))
-            nameResp <- styled subtle (buttonWith' (fontSize 14 . alignMid . minH 32) nameLabel)
-            tooltip nameResp (trackName t)
-            when (respClicked nameResp) (selectTrack tid)
-            flex
-            labelWith (fontMuted . fontSize 12 . alignMid) (T.take 12 (trackSound t))
-          rowWith (tight . gap 6 . fillW . alignMid) $ do
-            muteResp <- styled (if trackMuted t then warning else subtle) (buttonWith' (fixedWH 32 32 . fontSize 12 . alignMid) "M")
-            tooltip muteResp "Mute"
-            when (respClicked muteResp) $ update (\tr -> tr {trackMuted = not (trackMuted tr)})
-            soloResp <- styled (if trackSolo t then primary else subtle) (buttonWith' (fixedWH 32 32 . fontSize 12 . alignMid) "S")
-            tooltip soloResp "Solo"
-            when (respClicked soloResp) $ update (\tr -> tr {trackSolo = not (trackSolo tr)})
-            void $ richTextWith (fillW . fontMono . fontSize 12 . alignMid . fontColor (if silenced t then themeMuted th else styleFg (themePanel th))) [inlineText (sourceMini t)]
+        (_, area) <- styled surface $ panelWith (fillW . tight) $ withCursorShape UiCursorPointer $ mouseArea (fillW . padLRTB 6 10 8 8) $
+          rowWith (tight . gap 10 . fillW) $ do
+            -- The track's colour, the key that ties this row to its ring,
+            -- lane and code.
+            styled (panelStyle (background strip . borderWidth 0 . cornerRadius 2)) $ panelWith (fixedW 4 . fillH . tight) (pure ())
+            columnWith (tight . gap 6 . fillW) $ do
+              rowWith (tight . gap 8 . fillW . alignMid) $ do
+                labelWith (fontMono . fontSize 12 . fontColor col . alignMid) ("d" <> tshow (cChannel c))
+                nameResp <- styled subtle (buttonWith' (fontSize 15 . alignMid . minH 32) nameLabel)
+                tooltip nameResp (trackName t)
+                when (respClicked nameResp) (selectTrack tid)
+                flex
+                labelWith (fontMuted . fontMono . fontSize 12 . alignMid) (T.take 12 (trackSound t))
+              rowWith (tight . gap 6 . fillW . alignMid) $ do
+                muteResp <- styled (if trackMuted t then lit (themeWarning th) else id) (buttonWith' (fixedWH 32 30 . fontSize 12 . alignMid) "M")
+                tooltip muteResp (if trackMuted t then "Unmute" else "Mute")
+                when (respClicked muteResp) $ update (\tr -> tr {trackMuted = not (trackMuted tr)})
+                soloResp <- styled (if trackSolo t then lit (themeAccent th) else id) (buttonWith' (fixedWH 32 30 . fontSize 12 . alignMid) "S")
+                tooltip soloResp (if trackSolo t then "Stop soloing" else "Solo")
+                when (respClicked soloResp) $ update (\tr -> tr {trackSolo = not (trackSolo tr)})
+                void $ richTextWith (fillW . padLeft 4 . fontMono . fontSize 12 . alignMid . fontColor (if silenced t then themeMuted th else styleFg (themePanel th))) [inlineText (sourceMini t)]
         when (respClicked area) (selectTrack tid)
 
 -- | The selected track: its name at the top, then tabs for its rhythm, the
@@ -575,8 +598,8 @@ knobRow col now t update c = rowWith (tight . gap 14 . wrap . lineGap 16) $
     let sigName = case psSignal setting of
           SigNone -> "off"
           s -> T.toLower (T.drop 3 (tshow s))
-    modResp <- styled (if psSignal setting /= SigNone then buttonStyle (background (withAlpha col 0.3)) else subtle) $
-      buttonWith' (fixedW 64 . fontSize 11) ("∿ " <> sigName)
+    modResp <- styled (if psSignal setting /= SigNone then lit col else id) $
+      buttonWith' (fixedW 64 . minH 28 . fontSize 12 . alignMid) ("∿ " <> sigName)
     tooltip modResp "Modulate with a continuous signal"
     when (respClicked modResp) (setOpen (not open))
     (dismiss, edited) <- styled popupSurface $

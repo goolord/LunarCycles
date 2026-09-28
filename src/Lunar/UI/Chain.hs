@@ -61,7 +61,7 @@ transformChain col source chain = rowWith (tight . gap 6 . alignMid . fillW . wr
   (editing, setEditing) <- useState (Nothing :: Maybe Int)
   (adding, setAdding) <- useFlag False
   mouse <- uiMousePos
-  addResp <- styled (buttonStyle (background (withAlpha col 0.12))) $ buttonWith' (fontSize 13 . minH 36 . alignMid) "+ fn"
+  addResp <- buttonWith' (fontSize 13 . minH 36 . alignMid) "+ fn"
   when (respClicked addResp) (setAdding (not adding))
   tooltip addResp "Wrap the pattern in another function"
   (addDismiss, added) <- styled popupSurface $

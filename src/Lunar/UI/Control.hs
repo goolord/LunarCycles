@@ -49,10 +49,10 @@ wrappedText layout text = void (richTextWith (layout . fillW) [inlineText text])
 
 popupSurface :: Theme -> Theme
 popupSurface th =
-  let bg = colorRGBA 47 74 82 255
-      edge = colorRGBA 139 169 174 255
+  let bg = colorRGBA 30 45 60 255
+      edge = colorRGBA 120 146 169 255
    in (panelStyle (background bg . borderColor edge) . windowStyle (background bg . borderColor edge))
-        th {themeShadow = colorRGBA 5 18 22 220}
+        th {themeShadow = colorRGBA 3 7 14 220}
 
 focusCanvas :: CanvasConfig -> (Rect -> CanvasM ()) -> NanoUI Response
 focusCanvas cfg draw = do

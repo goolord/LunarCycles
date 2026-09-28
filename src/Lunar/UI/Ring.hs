@@ -83,6 +83,7 @@ ring cps now playing selected lanes = do
     drawStrokeAA base tip 1.5 (themeAccent th)
     drawCircle tip 3.5 (themeAccent th)
     drawPath (P.circle c well) (themeWindow th)
+    moonPhase c (well * 0.86) (now - cyc) (themeAccent th)
     -- Fit the readout in a square inscribed in the clear centre, not in the
     -- canvas bounds. On small panes, keep only the cycle count legible.
     let half = max 0 (well / sqrt 2 - 3)
@@ -101,3 +102,27 @@ ring cps now playing selected lanes = do
           textAt smallFont {textFontSize = 12 * fullScale} offset tempoText (themeMuted th)
         else when (32 * countScale >= 12) $
           textAt valueFont {textFontSize = 32 * countScale} 0 cycleText fg
+
+-- | The moon behind the readout, lit as far through its phases as the
+-- playhead is through the cycle: new at twelve o'clock, full at six. It
+-- waxes from the right and wanes to the left, and stays faint enough for
+-- the cycle count to read over it.
+moonPhase :: V2 -> Float -> Double -> Color -> CanvasM ()
+moonPhase c rad phase col = when (rad > 8) $ do
+  let p = realToFrac (phase - fromIntegral (floor phase :: Int)) :: Float
+      waxing = p < 0.5
+      k = cos (2 * pi * p)
+      side = if waxing then 1 else -1
+      samples = 40 :: Int
+      ys = [rad * (2 * fromIntegral j / fromIntegral samples - 1) | j <- [0 .. samples]]
+      halfW y = sqrt (max 0 (rad * rad - y * y))
+      at x y = V2 (v2X c + side * x) (v2Y c + y)
+      limb = [at (halfW y) y | y <- ys]
+      terminator = [at (k * halfW y) y | y <- reverse ys]
+      lighted = 1 - k
+      silver = lerpColor col (colorRGBA 255 255 255 255) 0.6
+  drawPath (P.circle c rad) (withAlpha silver 0.04)
+  drawStrokePath (P.arc c rad 0 (2 * pi)) 1 (withAlpha silver 0.14)
+  when (lighted > 0.01) $ do
+    drawPathWith P.NonZero (P.polygon (limb <> terminator)) (P.Solid (withAlpha silver 0.13))
+    drawStrokePath (P.arc c rad (if waxing then -pi / 2 else pi / 2) pi) 1.5 (withAlpha col 0.7)

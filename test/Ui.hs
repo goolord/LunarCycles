@@ -255,6 +255,41 @@ main = do
   restored <- collectTextSpans ctx2
   check "resizing back restores all five instruments" (all (`hasText` restored) ["Cycle", "Timeline", "Tracks", "Editor", "Code"])
 
+  -- Reset layout puts the panes back, and the old arrangement stays gone.
+  resetSpans <- collectTextSpans ctx2
+  case find (\(_, txt, _, _, _) -> txt == "Reset layout") resetSpans of
+    Just (r, _, _, _, _) -> do
+      let (p, rel) = clickPair base (spanCenter r)
+      mapM_ frame2 [p, rel, base, base, base]
+      afterReset <- collectTextSpans ctx2
+      let titleAt t = (\(Rect x _ _ _, _, _, _, _) -> x) <$> find (\(_, txt, _, _, _) -> txt == t) afterReset
+      savedReset <- loadLayout
+      check ("Reset layout restores the default panes: " <> T.pack (show (titleAt "Tracks", titleAt "Code"))) $
+        maybe False (< 100) (titleAt "Tracks") && maybe False (> 1000) (titleAt "Code")
+      check ("Reset layout saves the default arrangement: " <> T.pack (show savedReset)) $
+        fmap shape savedReset `elem` [Nothing, Just (V (H (P 1) (P 3)) (H (P 2) (V (P 4) (P 5))))]
+    Nothing -> check "found Reset layout" False
+
+  -- In a cramped arrangement every pane is drawn inside the rect the grid
+  -- gave it, so each title still picks its pane up.
+  let cramped = LSplit True 0.717 (LSplit False 0.4 (LSplit True 0.212 (LPane 2) (LPane 1)) (LSplit False 0.764 (LPane 4) (LPane 3))) (LPane 5)
+  mapM_ (\(title, target) -> do
+      Lunar.UI.Layout.saveLayout cramped
+      env3 <- newAppEnv eng
+      ctx3 <- newContext
+      let frame3 inp = void (runFrame ctx3 inp (void (lunarView env3)))
+      mapM_ frame3 [base, base, base]
+      ss <- collectTextSpans ctx3
+      case find (\(_, txt, _, _, _) -> txt == title) ss of
+        Just (r, _, _, _, _) -> do
+          let from = spanCenter r
+              midway = V2 ((v2X from + v2X target) / 2) ((v2Y from + v2Y target) / 2)
+          mapM_ frame3 [pressAt base from, holdAt base midway, holdAt base target, holdAt base target, releaseAt (holdAt base target), base, base]
+          moved <- loadLayout
+          check ("dragging " <> title <> " in a cramped layout moves it: " <> T.pack (show moved)) (moved /= Just cramped)
+        Nothing -> check ("found " <> title <> " in a cramped layout") False)
+    [("Tracks", V2 1000 200), ("Editor", V2 1000 200), ("Cycle", V2 1350 500), ("Timeline", V2 1350 500)]
+
   play <- spanOf "▶ Play"
   case play of
     Nothing -> check "found Play" False

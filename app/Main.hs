@@ -57,7 +57,7 @@ main = do
                , wsMode = if isJust (opt "--screenshot") then Hidden else Windowed
                }
         , sdlAppTheme = Just lunarTheme
-        , sdlAppFont = FontSearch ["Input Sans Regular", "Noto Sans Regular", "sans-serif"]
+        , sdlAppFont = FontSearch ["Input Sans Condensed Regular", "Noto Sans Regular", "sans-serif"]
         , sdlAppMonoFont = FontSearch ["Input Mono Regular", "DejaVu Sans Mono", "monospace"]
         , sdlAppFontSize = 14
         }
