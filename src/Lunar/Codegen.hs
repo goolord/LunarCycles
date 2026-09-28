@@ -140,23 +140,30 @@ transformCode = \case
   where
     fn name args = func name : concatMap (\a -> plain " " : a) args
     func = Tok TkFunc
-    num t = [Tok TkNumber t]
+    num t = [Tok TkNumber (codeNum t)]
     paren toks
       | length toks > 1 = plain "(" : toks <> [plain ")"]
       | otherwise = toks
 
+-- | A number as a function argument: @(-1)@, since @rot -1@ would read as
+-- a subtraction.
+codeNum :: Text -> Text
+codeNum t
+  | "-" `T.isPrefixOf` t = "(" <> t <> ")"
+  | otherwise = t
+
 paramCode :: Param -> ParamExpr -> [Tok]
 paramCode p = \case
-  PConst v -> [Tok TkOp "# ", Tok TkFunc (paramName p), plain " ", Tok TkNumber (showNum v)]
+  PConst v -> [Tok TkOp "# ", Tok TkFunc (paramName p), plain " ", Tok TkNumber (codeNum (showNum v))]
   PRange lo hi sig period ->
     [ Tok TkOp "# "
     , Tok TkFunc (paramName p)
     , plain " ("
     , Tok TkFunc "range"
     , plain " "
-    , Tok TkNumber (showNum lo)
+    , Tok TkNumber (codeNum (showNum lo))
     , plain " "
-    , Tok TkNumber (showNum hi)
+    , Tok TkNumber (codeNum (showNum hi))
     , Tok TkOp " $ "
     ]
       <> signalCode sig period

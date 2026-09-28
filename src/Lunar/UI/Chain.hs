@@ -149,13 +149,15 @@ editTransform = \case
     labelWith (fontMuted . fontSize 12) "No settings."
     pure other
 
--- | The function a higher-order transform applies.
+-- | The function a higher-order transform applies. One the menu does not
+-- offer, from a song file, is listed too, so looking at it keeps it.
 innerField :: Transform -> NanoUI Transform
 innerField t = columnWith (padLeft 10 . tight . gap 6 . fillW) $ do
+  let kinds = simpleKinds <> [transformKind t | transformKind t `notElem` simpleKinds]
   i <- rowWith (tight . gap 6 . alignMid) $ do
     labelWith (fixedW 64 . fontMuted . fontSize 12 . alignMid) "applies"
-    selectField 180 (map kindLabel simpleKinds) (fromMaybe 0 (elemIndex (transformKind t) simpleKinds))
-  let chosen = simpleKinds !! i
+    selectField 180 (map kindLabel kinds) (fromMaybe 0 (elemIndex (transformKind t) kinds))
+  let chosen = kinds !! i
       t' = if chosen == transformKind t then t else defaultTransform chosen
   editTransform t'
 

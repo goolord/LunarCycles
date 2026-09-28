@@ -208,9 +208,17 @@ setTracks eng comps = do
   writeIORef (engTracks eng) comps
   pushDirt eng
 
+-- | Every few milliseconds, hand over the notes that fall due. A failure,
+-- such as a pattern that throws when queried, is reported rather than left
+-- to end the loop.
 schedulerLoop :: Engine -> IO ()
 schedulerLoop eng = forever $ do
   threadDelay 4000
+  r <- try @SomeException (scheduleDue eng)
+  either (\e -> writeIORef (engMessage eng) ("Playback: " <> T.pack (show e))) pure r
+
+scheduleDue :: Engine -> IO ()
+scheduleDue eng = do
   now <- getMonotonicTime
   t <- readIORef (engTransport eng)
   due <-
@@ -236,12 +244,9 @@ schedulerLoop eng = forever $ do
       Nothing -> pure ms
       Just out -> foldM (sendNote (moId out)) ms notes
   withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (outputMidi . moId)
-  -- After MIDI is out, since a sound's first note loads its file. A failure
-  -- is reported rather than left to end the loop.
-  unless (null due) $ do
-    r <- try @SomeException $ withSampler eng $ \smp ->
-      forM_ due $ \(_, e, delay) -> playEvent smp (now + delay) (value e)
-    either (\e -> writeIORef (engMessage eng) ("Sampler: " <> T.pack (show e))) pure r
+  -- After MIDI is out, since a sound's first note loads its file.
+  unless (null due) $ withSampler eng $ \smp ->
+    forM_ due $ \(_, e, delay) -> playEvent smp (now + delay) (value e)
 
 sendNote :: OutputDeviceID -> MidiState -> (Double, MidiNote) -> IO MidiState
 sendNote dev ms (delay, n) = do
@@ -302,6 +307,8 @@ setDirt eng on = do
       readIORef (engDirt eng) >>= mapM_ Tidal.streamHush
       writeIORef (engDirtIds eng) []
       writeIORef (engDirtStatus eng) DirtOff
+    -- The stream still starting is kept, but not sent to.
+    (False, DirtStarting) -> writeIORef (engDirtStatus eng) DirtOff
     _ -> pure ()
   where
     start = do
@@ -315,16 +322,19 @@ setDirt eng on = do
               Tidal.startTidal
                 (Tidal.superdirtTarget {Tidal.oLatency = 0.1, Tidal.oAddress = "127.0.0.1", Tidal.oPort = 57120})
                 Tidal.defaultConfig {Tidal.cVerbose = False, Tidal.cCtrlListen = False}
+        -- Unless the user turned SuperDirt off while it started.
+        let settle status = atomicModifyIORef' (engDirtStatus eng) $ \old ->
+              if old == DirtStarting then (status, True) else (old, False)
         case r of
-          Left e -> writeIORef (engDirtStatus eng) (DirtFailed (T.pack (show e)))
+          Left e -> void (settle (DirtFailed (T.pack (show e))))
           Right st -> do
             writeIORef (engDirt eng) (Just st)
             t <- readIORef (engTransport eng)
             Tidal.streamSetCPS st (toRational (tCps t))
             now <- getMonotonicTime
             Tidal.streamSetCycle st (toRational (cycleAt t now))
-            writeIORef (engDirtStatus eng) DirtOn
-            pushDirt eng
+            on' <- settle DirtOn
+            when on' (pushDirt eng)
 
 -- | Hand SuperDirt the current patterns, or silence while stopped.
 pushDirt :: Engine -> IO ()

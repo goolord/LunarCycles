@@ -25,13 +25,13 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Lunar.Catalog (isPitched)
-import Lunar.Codegen (ParamExpr (..), paramExpr, sourceMini)
+import Lunar.Codegen (ParamExpr (..), paramExpr, sourceMini, sourceRule)
 import Lunar.Model
+import Lunar.Refactor (parseMini)
 import Sound.Tidal.Control (chop, hurry, striate)
 import Sound.Tidal.Core (every, (#))
 import Sound.Tidal.Core qualified as Core
 import Sound.Tidal.Params qualified as P
-import Sound.Tidal.ParseBP (parseBP)
 import Sound.Tidal.Pattern
 import Sound.Tidal.UI qualified as UI
 
@@ -44,6 +44,10 @@ data Compiled = Compiled
     -- ^ Why the mini-notation did not parse; the pattern is silent then.
   , cSignals :: ![(Param, Pattern Double)]
     -- ^ Each modulated parameter's signal, for reading its value live.
+  , cMini :: !Text
+    -- ^ The source's mini-notation, as 'sourceMini' spells it.
+  , cRule :: Maybe Text
+    -- ^ The rule that shortened a step grid, as 'sourceRule' names it.
   }
 
 -- | Every channel as a sequence plays it, each on the channel its code
@@ -94,16 +98,18 @@ compileTrack channel t =
     , cPattern = foldr (transformFn . snd) (withParams base) (trackChain t)
     , cError = err
     , cSignals = [(p, signalOf e) | (p, s) <- params, let e = paramExpr p s, isRange e]
+    , cMini = mini
+    , cRule = sourceRule t
     }
   where
     pitched = isPitched (trackSound t)
-    mini = T.unpack (sourceMini t)
+    mini = sourceMini t
     (base, err)
-      | pitched = case parseBP mini of
-          Left e -> (silence, Just (T.pack (show e)))
+      | pitched = case parseMini mini of
+          Left e -> (silence, Just e)
           Right notes -> (P.note notes # P.s (pure (T.unpack (trackSound t))), Nothing)
-      | otherwise = case parseBP mini of
-          Left e -> (silence, Just (T.pack (show e)))
+      | otherwise = case parseMini mini of
+          Left e -> (silence, Just e)
           Right names -> (P.s names, Nothing)
     params = [(p, s) | (p, s) <- Map.toList (trackParams t), paramActive p s]
     withParams pat = foldl (\acc (p, s) -> acc # paramFn p (signalOf (paramExpr p s))) pat params

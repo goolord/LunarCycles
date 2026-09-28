@@ -80,31 +80,36 @@ data Track = Track
 
 -- | Tracks with the same name and sound become one channel, taking the
 -- settings of the first; each sequence keeps its rhythms as the channel's
--- parts.
+-- parts. A sequence's second track of a name and sound goes to a second
+-- such channel, so neither rhythm is lost.
 fromV1 :: SongV1 -> Song
 fromV1 old =
   M.Song
     { M.songCps = songCps old
-    , M.songChannels = zipWith channel [1 ..] firsts
+    , M.songChannels = zipWith channel [1 ..] (map snd firsts)
     , M.songSequences = map sequence' (songSequences old)
     , M.songPlaylist = songPlaylist old
     }
   where
-    key t = (trackName t, trackSound t)
-    firsts = nubBy (\a b -> key a == key b) (concatMap seqTracks (songSequences old))
+    numbered sq =
+      [ ((trackName t, trackSound t, length (filter (same t) (take i (seqTracks sq)))), t)
+      | (i, t) <- zip [0 ..] (seqTracks sq)
+      ]
+    same a b = (trackName a, trackSound a) == (trackName b, trackSound b)
+    firsts = nubBy (\a b -> fst a == fst b) (concatMap numbered (songSequences old))
     channel cid t =
       (M.newChannel cid (trackName t) (trackSound t))
         { M.chanParams = trackParams t
         , M.chanMuted = trackMuted t
         , M.chanSolo = trackSolo t
         }
-    channelOf t = maybe 0 fst (find ((== key t) . key . snd) (zip [1 ..] firsts))
+    channelOf k = maybe 0 fst (find ((== k) . fst . snd) (zip [1 ..] firsts))
     sequence' sq =
       M.Sequence
         { M.seqId = seqId sq
         , M.seqName = seqName sq
         , M.seqCycles = seqCycles sq
-        , M.seqParts = Map.fromList [(channelOf t, M.Part (trackSource t) (trackChain t)) | t <- seqTracks sq]
+        , M.seqParts = Map.fromList [(channelOf k, M.Part (trackSource t) (trackChain t)) | (k, t) <- numbered sq]
         }
 
 -- | Write the song, adding the extension when the path has none. Returns

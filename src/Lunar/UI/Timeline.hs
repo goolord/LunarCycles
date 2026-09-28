@@ -88,26 +88,30 @@ timeline start pageSpan now running selected lanes = do
           placed = concat (zipWith lanePlacement [0 :: Int ..] lanes)
           lanePlacement i lane =
             let ly = y + header + fromIntegral i * laneH
-             in [(e, eventRect lane ly e) | e <- laneEvents lane]
-          eventRect lane ly e =
-            let ws = fromRational (wholeStart e)
-                we = fromRational (wholeStop e)
-                ex0 = xOf ws
-                ex1 = max (ex0 + 3) (xOf we - 1.5)
-             in if lanePitched lane
-                  then
-                    let notes = mapMaybe (\ev -> Map.lookup "note" (value ev) >>= valueDouble) (laneEvents lane)
-                        lo = if null notes then 0 else minimum notes
-                        hi = max (lo + 12) (if null notes then 12 else maximum notes)
-                        nh = max 4 (min 9 (laneH / 8))
-                        frac = realToFrac ((evNum "note" 0 e - lo) / (hi - lo))
-                        cy = ly + laneH - 6 - frac * (laneH - 12)
-                     in Rect ex0 (cy - nh / 2) (ex1 - ex0) nh
-                  else
-                    let panned = any (\ev -> abs (evNum "pan" 0.5 ev - 0.5) > 0.05) (laneEvents lane)
-                        eh = min 32 (laneH * (if panned then 0.25 else 0.44))
-                        cy = ly + laneH / 2 + realToFrac (evNum "pan" 0.5 e - 0.5) * laneH * 0.5
-                     in Rect ex0 (cy - eh / 2) (ex1 - ex0) eh
+                rectOf = eventRect lane
+             in [(e, rectOf ly e) | e <- laneEvents lane]
+          -- The lane's note range and whether it is panned, worked out once
+          -- for all its events.
+          eventRect lane =
+            let notes = mapMaybe (\ev -> Map.lookup "note" (value ev) >>= valueDouble) (laneEvents lane)
+                lo = if null notes then 0 else minimum notes
+                hi = max (lo + 12) (if null notes then 12 else maximum notes)
+                panned = any (\ev -> abs (evNum "pan" 0.5 ev - 0.5) > 0.05) (laneEvents lane)
+             in \ly e ->
+                  let ws = fromRational (wholeStart e)
+                      we = fromRational (wholeStop e)
+                      ex0 = xOf ws
+                      ex1 = max (ex0 + 3) (xOf we - 1.5)
+                   in if lanePitched lane
+                        then
+                          let nh = max 4 (min 9 (laneH / 8))
+                              frac = realToFrac ((evNum "note" 0 e - lo) / (hi - lo))
+                              cy = ly + laneH - 6 - frac * (laneH - 12)
+                           in Rect ex0 (cy - nh / 2) (ex1 - ex0) nh
+                        else
+                          let eh = min 32 (laneH * (if panned then 0.25 else 0.44))
+                              cy = ly + laneH / 2 + realToFrac (evNum "pan" 0.5 e - 0.5) * laneH * 0.5
+                           in Rect ex0 (cy - eh / 2) (ex1 - ex0) eh
       drawRoundedRect (Rect x y w h) 4 (themeWindow th)
       -- Cycle and beat rules, and the cycle numbers above them.
       let firstBeat = ceiling (start * 4) :: Int
@@ -132,9 +136,10 @@ timeline start pageSpan now running selected lanes = do
           drawRect (Rect (x + 4) ly (w - 8) laneH) (withAlpha col 0.08)
         withClip (Rect (x + 8) ly (gutter - 14) laneH) $
           drawTextWith smallFont {textFontWeight = if selected == Just i then WeightMedium else WeightNormal} (V2 (x + 10) (ly + laneH / 2)) AlignStart AlignMiddle (laneName lane) (if dimmed then themeMuted th else col)
+        let rectOf = eventRect lane
         withClip (Rect gx (y + header) gw (h - header)) $ do
           forM_ (laneEvents lane) $ \e -> do
-            let r = eventRect lane ly e
+            let r = rectOf ly e
                 ws = fromRational (wholeStart e)
                 we = fromRational (wholeStop e)
                 playing = running && ws <= now && now < we

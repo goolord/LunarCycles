@@ -837,7 +837,7 @@ trackList th paneWidth selected selectTrack silenced placed editTrack compiled =
                 (soloResp, solo') <- toggle Accent "S" (trackSolo t)
                 tooltip soloResp (if trackSolo t then "Stop soloing" else "Solo")
                 when (solo' /= trackSolo t) $ update (\tr -> tr {trackSolo = solo'})
-                void $ richTextWith (fillW . padLeft 4 . fontMono . fontSize 12 . alignMid . fontColor (if silenced t then themeMuted th else styleFg (themePanel th))) [inlineText (if placed tid then sourceMini t else "—")]
+                void $ richTextWith (fillW . padLeft 4 . fontMono . fontSize 12 . alignMid . fontColor (if silenced t then themeMuted th else styleFg (themePanel th))) [inlineText (if placed tid then cMini c else "—")]
         when (respClicked area) (selectTrack tid)
 
 -- | The selected track: its name at the top, then tabs for its rhythm and
@@ -869,7 +869,7 @@ trackEditor th index now editorTab setEditorTab silenced placement update duplic
         editorTab
         [tab TabRhythm "Rhythm" (), tab TabFunctions "Functions" (), tab TabSound "Sound" ()]
     when (tab' /= editorTab) (setEditorTab tab')
-    let expression = T.intercalate " $ " (map (T.concat . map tokText . transformCode . snd) (trackChain t) <> [sourceCode t])
+    let expression = T.intercalate " $ " (map (T.concat . map tokText . transformCode . snd) (trackChain t) <> [sourceCode c])
     void $ richTextWith (fillW . fontMono . fontSize 13 . fontColor (if silenced then themeMuted th else col)) [inlineText expression]
     scrollWith (fillW . fillH) $ columnWith (padRight 10 . tight . gap 10 . fillW) $ case editorTab of
       TabRhythm -> do
@@ -884,7 +884,7 @@ trackEditor th index now editorTab setEditorTab silenced placement update duplic
             case convertSource pitched mode' t of
               Right tr -> update (const tr) >> setNote ""
               Left why -> setNote why
-          scope $ case (trackSource t, sourceRule t) of
+          scope $ case (trackSource t, cRule c) of
             (Steps _, Just rule) -> wrappedText (fontMuted . fontSize 12 . alignMid) ("Simplified: " <> rule)
             _ -> pure ()
         scope $ unless (T.null note) $ wrappedText (fontTone Warning . fontSize 12) note
@@ -914,7 +914,7 @@ trackEditor th index now editorTab setEditorTab silenced placement update duplic
               Just (snd', xs) -> update (\tr -> tr {trackSource = Steps xs, trackSound = if pitched || T.null snd' then trackSound tr else snd'})
               Nothing -> pure ()
       TabFunctions -> do
-        chain' <- transformChain col (sourceCode t) (trackChain t)
+        chain' <- transformChain col (sourceCode c) (trackChain t)
         when (chain' /= trackChain t) $ update (\tr -> tr {trackChain = chain'})
         hint "Functions read left to right as the code does: the first wraps all the others. Drag a block to reorder it, click it to change it."
       TabSound -> do
@@ -950,10 +950,12 @@ soundField current = columnWith (fixedW 240 . tight) $ do
         _ -> Nothing
 
 -- | The source as it appears at the end of the code's chain.
-sourceCode :: Track -> Text
-sourceCode t
-  | isPitched (trackSound t) = "note \"" <> sourceMini t <> "\" # s \"" <> trackSound t <> "\""
-  | otherwise = "s \"" <> sourceMini t <> "\""
+sourceCode :: Compiled -> Text
+sourceCode c
+  | isPitched (trackSound t) = "note \"" <> cMini c <> "\" # s \"" <> trackSound t <> "\""
+  | otherwise = "s \"" <> cMini c <> "\""
+  where
+    t = cTrack c
 
 -- | Rewrite a track's source for another editor. A mini-notation pattern
 -- that is not a plain grid stays as it is.

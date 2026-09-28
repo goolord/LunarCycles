@@ -11,6 +11,7 @@ module Lunar.Refactor
   , literalSteps
   , stepToken
   , miniToSteps
+  , parseMini
   ) where
 
 import Data.List (nub, sortOn)
@@ -20,7 +21,7 @@ import Data.Ratio (denominator)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Lunar.Model (euclidSteps)
-import Sound.Tidal.ParseBP (parseBP)
+import Sound.Tidal.ParseBP (Enumerable, Parseable, TPat (..), parseBP, parseTPat, toPat)
 import Sound.Tidal.Pattern
 
 -- | A spelling of a grid, and what made it shorter than the literal one.
@@ -212,7 +213,36 @@ miniToSteps pitched txt = do
   pure (sound, [snd <$> Map.lookup i parsed | i <- [0 .. size - 1]])
 
 parseStrings :: Text -> Either Text (Pattern String)
-parseStrings txt = either (const (Left "does not parse")) Right (parseBP (T.unpack txt))
+parseStrings txt = either (const (Left "does not parse")) Right (parseMini txt)
+
+-- | Mini-notation as Tidal's parser reads it. Tidal accepts a sequence
+-- ending in @.@ (@bd .@) but keeps the mark, and the pattern throws when
+-- queried, so that is refused here as the parse error it is.
+parseMini :: (Enumerable a, Parseable a) => Text -> Either Text (Pattern a)
+parseMini txt = case parseTPat (T.unpack txt) of
+  Left e -> Left (T.pack (show e))
+  Right tp
+    | hasFoot tp -> Left "a \".\" needs steps after it"
+    | otherwise -> Right (toPat tp)
+
+hasFoot :: TPat a -> Bool
+hasFoot = \case
+  TPat_Foot -> True
+  TPat_Atom _ _ -> False
+  TPat_Fast t p -> hasFoot t || hasFoot p
+  TPat_Slow t p -> hasFoot t || hasFoot p
+  TPat_DegradeBy _ _ p -> hasFoot p
+  TPat_CycleChoose _ ps -> any hasFoot ps
+  TPat_Euclid a b c p -> hasFoot a || hasFoot b || hasFoot c || hasFoot p
+  TPat_Stack ps -> any hasFoot ps
+  TPat_Polyrhythm r ps -> maybe False hasFoot r || any hasFoot ps
+  TPat_Seq ps -> any hasFoot ps
+  TPat_Silence -> False
+  TPat_Elongate _ p -> hasFoot p
+  TPat_Repeat _ p -> hasFoot p
+  TPat_EnumFromTo a b -> hasFoot a || hasFoot b
+  TPat_Var _ -> False
+  TPat_Chord _ n name mods -> hasFoot n || hasFoot name || any hasFoot mods
 
 -- | A token's sound and step value: @bd:2@ is @(Just "bd", 2)@, a note
 -- @7@ is @(Nothing, 7)@.

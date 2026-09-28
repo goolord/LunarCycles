@@ -9,7 +9,7 @@ module Lunar.Midi
   , exportMidi
   ) where
 
-import Data.List (sortOn)
+import Data.List (nub, sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, mapMaybe)
 import Euterpea.IO.MIDI.GeneralMidi (toGM)
@@ -105,25 +105,25 @@ clampI :: Int -> Int -> Int -> Int
 clampI lo hi = max lo . min hi
 
 -- | @cycles@ cycles of the audible tracks as Euterpea music: one part per
--- track, each note placed by a rest from the start of the part. A cycle is a
--- whole note, and the tempo scales Euterpea's 120 quarter notes a minute to
--- the song's cycles per second.
+-- instrument a track plays, as live playback routes each note by its own
+-- sound, and each note placed by a rest from the start of the part. A cycle
+-- is a whole note, and the tempo scales Euterpea's 120 quarter notes a
+-- minute to the song's cycles per second.
 songMusic :: Double -> Int -> [Compiled] -> Music1
 songMusic cps cycles comps =
-  tempo (toRational (2 * cps)) (foldr (:=:) (rest 0) (map part comps))
+  tempo (toRational (2 * cps)) (foldr (:=:) (rest 0) (concatMap parts comps))
   where
-    part c =
+    parts c =
       let evs = sortOn wholeStart (filter eventHasOnset (eventsIn 0 (fromIntegral cycles) (cPattern c)))
           notes = mapMaybe (\e -> (,) e <$> eventNote cps (cChannel c) e) evs
-          inst = case notes of
-            (_, n) : _ -> mnInstrument n
-            [] -> Percussion
           placed (e, n) =
             let at = wholeStart e
                 len = min (wholeStop e - wholeStart e) (if mnChannel n == 9 then 1 / 8 else 4)
                 body = note len (pitch (mnKey n), [Volume (mnVelocity n)])
              in if at > 0 then rest at :+: body else body
-       in instrument inst (foldr ((:=:) . placed) (rest 0) notes)
+       in [ instrument inst (foldr ((:=:) . placed) (rest 0) (filter ((== inst) . mnInstrument . snd) notes))
+          | inst <- nub (map (mnInstrument . snd) notes)
+          ]
 
 -- | Write @cycles@ cycles of the audible tracks to a Standard MIDI File.
 exportMidi :: FilePath -> Double -> Int -> [Compiled] -> IO ()
