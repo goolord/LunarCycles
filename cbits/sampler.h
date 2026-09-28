@@ -8,7 +8,6 @@ typedef struct lunar_sampler lunar_sampler;
  * cannot be read; lunar_error says why. */
 lunar_sample *lunar_sample_load(const char *path, int rate);
 void lunar_sample_free(lunar_sample *sample);
-int lunar_sample_frames(const lunar_sample *sample);
 
 /* A mixer at `rate`. Until lunar_sampler_start it only renders offline. */
 lunar_sampler *lunar_sampler_new(int rate);

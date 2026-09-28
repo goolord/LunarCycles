@@ -33,6 +33,8 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Foreign hiding (void)
 import Foreign.C
+import GHC.Foreign qualified as GHC
+import GHC.IO.Encoding (getFileSystemEncoding)
 import GHC.Clock (getMonotonicTime)
 import Lunar.Compile (valueDouble, valueText)
 import Sound.Tidal.Pattern (ValueMap)
@@ -104,13 +106,14 @@ offlineSampler hz dir =
             else Right <$> (Sampler p hz dir sounds <$> newMVar Map.empty <*> newIORef Set.empty)
 
 -- | Each subfolder that holds WAV files, by name, with its files in order.
+-- A subfolder that cannot be read is left out.
 scanFolder :: FilePath -> IO (Map.Map Text [FilePath])
 scanFolder dir = do
   names <- listDirectory dir
   found <- forM (sort names) $ \name -> do
     let sub = dir </> name
     isDir <- doesDirectoryExist sub
-    files <- if isDir then sort . filter isWav <$> listDirectory sub else pure []
+    files <- if isDir then either (const []) (sort . filter isWav) <$> try @SomeException (listDirectory sub) else pure []
     pure (T.pack name, map (sub </>) files)
   pure (Map.fromList (filter (not . null . snd) found))
   where
@@ -142,7 +145,9 @@ sampleFor smp name n = case Map.lookup name (smpSounds smp) of
     p <- modifyMVar (smpLoaded smp) $ \loaded -> case Map.lookup path loaded of
       Just p -> pure (loaded, p)
       Nothing -> do
-        p <- withCString path (\c -> c_sampleLoad c (fromIntegral (smpRate smp)))
+        enc <- getFileSystemEncoding
+        -- The file system's encoding, which round-trips names that are not UTF-8.
+        p <- GHC.withCString enc path (\c -> c_sampleLoad c (fromIntegral (smpRate smp)))
         pure (Map.insert path p loaded, p)
     pure (if p == nullPtr then Nothing else Just p)
 

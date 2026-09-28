@@ -213,29 +213,35 @@ schedulerLoop eng = forever $ do
   threadDelay 4000
   now <- getMonotonicTime
   t <- readIORef (engTransport eng)
-  when (tPlaying t) $ do
-    let cNow = cycleAt t now
-        horizon = cNow + lookahead * tCps t
-    from <- atomicModifyIORef' (engCursor eng) $ \c ->
-      (horizon, if c < cNow - 0.25 || c > horizon then cNow else c)
-    when (horizon > from) $ do
-      comps <- readIORef (engTracks eng)
-      let due =
-            [ (c, e, (on - cNow) / tCps t)
-            | c <- comps
-            , e <- eventsIn from horizon (cPattern c)
-            , eventHasOnset e
-            , let on = fromRational (wholeStart e)
-            , on >= from && on < horizon
-            ]
-          notes = sortOn fst [(delay, n) | (c, e, delay) <- due, Just n <- [eventNote (tCps t) (cChannel c) e]]
-      unless (null notes) $ modifyMVar_ (engMidi eng) $ \ms ->
-        case msSelected ms of
-          Nothing -> pure ms
-          Just out -> foldM (sendNote (moId out)) ms notes
-      unless (null due) $ withSampler eng $ \smp ->
-        forM_ due $ \(_, e, delay) -> playEvent smp (now + delay) (value e)
+  due <-
+    if not (tPlaying t)
+      then pure []
+      else do
+        let cNow = cycleAt t now
+            horizon = cNow + lookahead * tCps t
+        from <- atomicModifyIORef' (engCursor eng) $ \c ->
+          (horizon, if c < cNow - 0.25 || c > horizon then cNow else c)
+        comps <- if horizon > from then readIORef (engTracks eng) else pure []
+        pure
+          [ (c, e, (on - cNow) / tCps t)
+          | c <- comps
+          , e <- eventsIn from horizon (cPattern c)
+          , eventHasOnset e
+          , let on = fromRational (wholeStart e)
+          , on >= from && on < horizon
+          ]
+  let notes = sortOn fst [(delay, n) | (c, e, delay) <- due, Just n <- [eventNote (tCps t) (cChannel c) e]]
+  unless (null notes) $ modifyMVar_ (engMidi eng) $ \ms ->
+    case msSelected ms of
+      Nothing -> pure ms
+      Just out -> foldM (sendNote (moId out)) ms notes
   withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (outputMidi . moId)
+  -- After MIDI is out, since a sound's first note loads its file. A failure
+  -- is reported rather than left to end the loop.
+  unless (null due) $ do
+    r <- try @SomeException $ withSampler eng $ \smp ->
+      forM_ due $ \(_, e, delay) -> playEvent smp (now + delay) (value e)
+    either (\e -> writeIORef (engMessage eng) ("Sampler: " <> T.pack (show e))) pure r
 
 sendNote :: OutputDeviceID -> MidiState -> (Double, MidiNote) -> IO MidiState
 sendNote dev ms (delay, n) = do

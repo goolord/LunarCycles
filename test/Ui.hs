@@ -49,11 +49,13 @@ main = do
   let check name ok = unless ok $ do
         T.putStrLn ("FAIL: " <> name)
         modifyIORef failures (+ 1)
-  -- Saved layouts go to a scratch config directory, not the user's.
+  -- Saved layouts go to a scratch config directory, not the user's, and
+  -- the sampler finds no Dirt-Samples, so the test opens no audio device.
   tmp <- getTemporaryDirectory
   let config = tmp <> "/lunar-cycles-ui-test"
   createDirectoryIfMissing True config
   setEnv "XDG_CONFIG_HOME" config
+  setEnv "XDG_DATA_HOME" config
   forgetSaved
   eng <- newEngine (songCps demoSong)
   env <- newAppEnv eng

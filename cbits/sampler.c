@@ -91,8 +91,6 @@ void lunar_sample_free(lunar_sample *sample) {
   free(sample);
 }
 
-int lunar_sample_frames(const lunar_sample *sample) { return sample->frames; }
-
 lunar_sampler *lunar_sampler_new(int rate) {
   lunar_sampler *s = calloc(1, sizeof *s);
   if (!s) return NULL;

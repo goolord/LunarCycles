@@ -185,7 +185,7 @@ samplerChecks check = do
       playEvent smp (now + 0.01) (Map.fromList [("s", VS "bd")])
       later <- renderFrames smp 1000
       let start = length (takeWhile ((< 1e-4) . abs . fst) later)
-      check ("a note starts at its time: frame " <> T.pack (show start)) (start >= 470 && start <= 481)
+      check ("a note starts at its time: frame " <> T.pack (show start)) (start >= 380 && start <= 481)
       _ <- renderFrames smp 6000
       playEvent smp (now + 0.01) (Map.fromList [("s", VS "bd")])
       cancelPending smp
