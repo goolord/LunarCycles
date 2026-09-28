@@ -7,8 +7,6 @@ module Lunar.UI.Code
 import Control.Monad (forM_, void)
 import Data.Text qualified as T
 import Lunar.Codegen (Line, Tok (..), TokClass (..))
-import Lunar.UI.Control (stripe)
-import Lunar.UI.Palette (withAlpha)
 import NanoUI
 
 codeView :: Maybe (Int, Color) -> [(Maybe Int, Line)] -> NanoUI ()
@@ -35,8 +33,7 @@ codeView selected code = do
         if all (T.null . T.strip . tokText) line
           then spacer (Fixed 1) (Fixed 8)
           else case marked tag of
-            Just col -> rowWith (tight . fillW . gap 0) $ do
-              stripe 3 0 col
-              styled (panelStyle (background (withAlpha col 0.12) . borderWidth 0 . cornerRadius 0)) $
-                panelWith (tight . fillW . padXY 8 1) (text line)
-            Nothing -> columnWith (tight . fillW . padLRTB 11 8 1 1) (text line)
+            Just col ->
+              styled (panelStyle (background (withAlpha col 0.12) . borderLeft 3 col . cornerRadius 0)) $
+                panelWith (padLeft 11 . tight . fillW) (text line)
+            Nothing -> columnWith (padLeft 11 . tight . fillW) (text line)

@@ -159,12 +159,9 @@ every pane size.
 
 ## Pane geometry
 
-The pane grid decides where each pane is, and drags a pane by a handle over
-its title at that position. Each pane is therefore held to exactly the rect
-the grid gives it; content that wants more room scrolls or clips inside the
-pane instead of pushing its neighbours out of place. The grid's margin sits
-outside the grid, since the grid lays panes out over its whole rect. A pane
+The pane grid holds each pane to the rect its split gives it; content that
+wants more room scrolls or clips inside the pane instead of pushing its
+neighbours out of place. A pane is dragged by its whole title bar. A pane
 too narrow for its header controls shows only its title and maximize
-button, so nothing spills over the next pane's title. Reset layout skips
-saving on the frame it is pressed, when the old arrangement is still on
-screen.
+button. The arrangement is saved when a drag or resize lets go, and Reset
+layout hands the grid the starting arrangement and forgets the saved one.

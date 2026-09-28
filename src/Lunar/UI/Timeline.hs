@@ -22,7 +22,6 @@ import Data.Text qualified as T
 import Lunar.Compile (sampleAt, valueDouble, valueText)
 import Lunar.Model (Param (..), paramName)
 import Lunar.UI.Knob (toNorm)
-import Lunar.UI.Palette
 import NanoUI
 import NanoUI.Path qualified as P
 import Sound.Tidal.Pattern (Event, EventF (..), Pattern, ValueMap, wholeStart, wholeStop)
@@ -127,7 +126,7 @@ timeline start pageSpan now running selected lanes = do
         let ly = y + header + fromIntegral i * laneH
             col = laneColor lane
             dimmed = laneSilenced lane
-            alphaFor e = (if dimmed then 0.25 else 1) * max 0.35 (min 1 (evNum "gain" 1 e / 1.2))
+            alphaFor e = (if dimmed then 0.25 else 1) * max 0.35 (min 1 (realToFrac (evNum "gain" 1 e) / 1.2))
         drawRect (Rect (x + 4) (ly + laneH - 1) (w - 8) 1) (withAlpha (themeSeparator th) 0.5)
         when (selected == Just i) $ do
           drawRect (Rect (x + 4) ly (w - 8) laneH) (withAlpha col 0.08)

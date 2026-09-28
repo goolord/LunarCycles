@@ -16,8 +16,7 @@ import Data.Text qualified as T
 import Lunar.Codegen (Tok (..), transformCode)
 import Lunar.Model
 import Lunar.UI.Editors (intField)
-import Lunar.UI.Control (selectField, wrappedText, popupSurface)
-import Lunar.UI.Palette
+import Lunar.UI.Control (selectField, wrappedText)
 import NanoUI
 
 -- | A transform written as code, for a block's face.
@@ -47,24 +46,15 @@ kindDescription = \case
   KSometimes -> "Apply the function to about half of the events."
   KOff -> "Play a transformed copy of the pattern offset by a fraction of a cycle."
 
-data DragState = DragState
-  { dsId :: !Int
-  , dsStartX :: !Float
-  , dsMoved :: !Bool
-  }
-  deriving (Eq)
-
 -- | The chain editor. Returns the chain as edited this frame.
 transformChain :: Color -> Text -> [(Int, Transform)] -> NanoUI [(Int, Transform)]
 transformChain col source chain = rowWith (tight . gap 6 . alignMid . fillW . wrap . lineGap 6) $ do
-  (drag, setDrag) <- useState (Nothing :: Maybe DragState)
   (editing, setEditing) <- useState (Nothing :: Maybe Int)
   (adding, setAdding) <- useFlag False
-  mouse <- uiMousePos
   addResp <- buttonWith' (fontSize 13 . minH 36 . alignMid) "+ fn"
   when (respClicked addResp) (setAdding (not adding))
   tooltip addResp "Wrap the pattern in another function"
-  (addDismiss, added) <- styled popupSurface $
+  (addDismiss, added) <-
     popup adding ((defaultPopupConfig (AnchorRect (respRect addResp))) {cfgPlacement = PlacementBelow}) $
       columnWith (tight . gap 0) $ do
         picks <- forM chainKinds $ \k -> do
@@ -77,17 +67,20 @@ transformChain col source chain = rowWith (tight . gap 6 . alignMid . fillW . wr
         Just (Just k) -> (freshId, defaultTransform k) : chain
         _ -> chain
   when (isJust (added >>= id) || respClicked addDismiss) (setAdding False)
-  blocks <- forM withAdded $ \(tid, t) -> withKey tid $ do
-    let dragged = fmap dsId drag == Just tid
+  -- Blocks are laid out from where they were drawn last frame. While a
+  -- popup is open its presses are not drags, even over a block beneath it.
+  (drawnAt, setDrawnAt) <- useState ([] :: [(Int, Rect)])
+  moving <- useReorder (map fst withAdded) (if isJust editing || adding then [] else drawnAt)
+  blocks <- forM [(tid, t) | tid <- reorderPreview moving, Just t <- [lookup tid withAdded]] $ \(tid, t) -> withKey tid $ do
+    let dragged = reorderDragging moving == Just tid
         tint = if dragged then 0.24 else 0.14
     resp <-
       withCursorShape (if dragged then UiCursorGrabbing else UiCursorGrab) $
         styled (buttonStyle (background (withAlpha col tint) . hoverBackground (withAlpha col 0.22) . borderColor (withAlpha col 0.65))) $
           buttonWith' (fontMono . fontSize 13 . minH 36 . alignMid) (codeText t)
     tooltip resp (kindDescription (transformKind t) <> "  Drag to reorder, click to edit.")
-    d <- useDrag2DOn resp
     let open = editing == Just tid
-    (dismiss, edited) <- styled popupSurface $
+    (dismiss, edited) <-
       popupWith open ((defaultPopupConfig (AnchorRect (respRect resp))) {cfgPlacement = PlacementBelow}) (fixedW 340) $
         columnWith (padAll 12 . tight . gap 12 . fillW) $ do
           wrappedText (fontMono . fontMedium) (codeText t)
@@ -104,7 +97,7 @@ transformChain col source chain = rowWith (tight . gap 6 . alignMid . fillW . wr
             ok <- button "Done"
             pure (r, ok)
           pure (t', remove, done, shift)
-    let clicked = respClicked resp && not (maybe False (\s -> dsId s == tid && dsMoved s) drag)
+    let clicked = respClicked resp && not (reorderMoved moving)
     when clicked (setEditing (if open then Nothing else Just tid))
     let (t2, removed) = case edited of
           Just (t', r, _, _) -> (t', r)
@@ -113,24 +106,12 @@ transformChain col source chain = rowWith (tight . gap 6 . alignMid . fillW . wr
         closing = respClicked dismiss || maybe False (\(_, r, ok, move) -> r || ok || move /= 0) edited
     when (open && closing) (setEditing Nothing)
     labelWith (fontMono . fontMuted . alignMid) "$"
-    pure (tid, t2, removed, resp, d, shift)
+    pure (tid, (t2, removed, shift, respRect resp))
   wrappedText (fontMono . fontSize 13 . alignMid) source
-  let kept = [(tid, t) | (tid, t, removed, _, _, _) <- blocks, not removed]
-      shifted = foldl (\xs (tid, _, _, _, _, direction) -> moveBy tid direction xs) kept blocks
-      active = [(tid, resp) | (tid, _, _, resp, d, _) <- blocks, dragActive d]
-  case active of
-    (tid, _) : _ -> do
-      let start = maybe (v2X mouse) dsStartX (if fmap dsId drag == Just tid then drag else Nothing)
-          moved = abs (v2X mouse - start) > 6 || maybe False (\s -> dsId s == tid && dsMoved s) drag
-          next = DragState tid start moved
-      when (Just next /= drag) (setDrag (Just next))
-      pure $
-        if moved
-          then reorder tid [(i, respRect r) | (i, _, _, r, _, _) <- blocks] (v2X mouse) shifted
-          else shifted
-    [] -> do
-      when (isJust drag) (setDrag Nothing)
-      pure shifted
+  let drawn = [(tid, rect) | (tid, (_, _, _, rect)) <- blocks]
+      kept = [(tid, t) | tid <- reorderOrder moving, Just (t, removed, _, _) <- [lookup tid blocks], not removed]
+  when (drawn /= drawnAt) (setDrawnAt drawn)
+  pure (foldl (\xs (tid, (_, _, direction, _)) -> moveBy tid direction xs) kept blocks)
 
 moveBy :: Int -> Int -> [(Int, Transform)] -> [(Int, Transform)]
 moveBy tid direction chain
@@ -141,18 +122,6 @@ moveBy tid direction chain
         let target = max 0 (min (length chain - 1) (from + direction))
             rest = filter ((/= tid) . fst) chain
          in take target rest <> [chain !! from] <> drop target rest
-
--- | Move the dragged block to where the pointer is among the others.
-reorder :: Int -> [(Int, Rect)] -> Float -> [(Int, Transform)] -> [(Int, Transform)]
-reorder tid rects px chain = fromMaybe chain $ do
-  from <- findIndex ((== tid) . fst) chain
-  let others = [(i, r) | (i, r) <- rects, i /= tid]
-      target = length [() | (_, Rect x _ w _) <- others, x + w / 2 < px]
-      item = chain !! from
-      rest = [c | c <- chain, fst c /= tid]
-  when' (target /= from) (take target rest <> [item] <> drop target rest)
-  where
-    when' ok v = if ok then Just v else Nothing
 
 -- | The settings of one transform, and of the function inside it for the
 -- higher-order ones.

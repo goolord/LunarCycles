@@ -10,8 +10,6 @@ module Lunar.UI.Knob
 import Data.Text (Text)
 import Lunar.Codegen (showNum)
 import Lunar.Model
-import Lunar.UI.Control
-import Lunar.UI.Palette
 import NanoUI
 import NanoUI.Path qualified as P
 
@@ -55,11 +53,12 @@ paramKnob col p base sweep live = do
               <> [maybe (-1) (realToFrac . toNorm p) live, if paramActive p (ParamSetting base SigNone 0 1) then 1 else 0]
           )
   resp <-
-    focusCanvas
+    canvasConfigured
       defaultCanvasConfig
         { canvasLayout = fixedWH d d defaultLayout
         , canvasContent = drawingKey
         , canvasCursor = Just (\_ _ _ -> UiCursorNsResize)
+        , canvasFocusable = True
         }
       $ \(Rect x y w h) -> do
         cdc <- drawContext
@@ -96,8 +95,8 @@ paramKnob col p base sweep live = do
           Nothing -> pure ()
   drag <- useDrag2DOn resp
   (_, wheel) <- useWheelDeltaOn resp
-  key <- focusedKeys resp
-  let keyboard = fromIntegral (fromEnum (key KeyUp || key KeyRight) - fromEnum (key KeyDown || key KeyLeft)) * 0.02
+  nav <- useKeyNav (respId resp)
+  let keyboard = fromIntegral (fromEnum (knUp nav || knRight nav) - fromEnum (knDown nav || knLeft nav)) * 0.02
       delta = negate (realToFrac (v2Y (dragDelta drag))) / 160 + realToFrac wheel * 0.03 + keyboard
       next
         | respRightClicked resp = paramDefault p

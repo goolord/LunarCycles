@@ -9,8 +9,6 @@ import Lunar.Codegen (songCodeText, sourceMini)
 import Lunar.Compile (compileSong, cError)
 import Lunar.Model
 import Lunar.Refactor
-import Lunar.UI.Layout (SavedLayout (..), layoutFromRects)
-import NanoUI (Rect (..))
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -43,15 +41,6 @@ main = do
   check "miniToSteps bd(3,8)" (fmap snd (miniToSteps False "bd(3,8)") == Right (euclidSteps 3 8 0 0))
   check "miniToSteps rejects <a b>" (either (const True) (const False) (miniToSteps False "<bd sn>"))
   check "miniToSteps reads samples" (miniToSteps False "hh:2 ~ hh ~" == Right ("hh", resizeSteps 8 [Just 2, Nothing, Just 0, Nothing]))
-
-  -- Pane rects read back as the split tree that tiles them (7-pixel gutters).
-  check "two panes side by side" $
-    layoutFromRects 7 [(1, Rect 0 0 500 600), (2, Rect 507 0 500 600)] == Just (LSplit True 0.5 (LPane 1) (LPane 2))
-  check "a column beside a stack" $
-    layoutFromRects 7 [(1, Rect 0 0 300 607), (2, Rect 307 0 700 300), (3, Rect 307 307 700 300)]
-      == Just (LSplit True 0.3 (LPane 1) (LSplit False 0.5 (LPane 2) (LPane 3)))
-  check "overlapping rects are no layout" $
-    layoutFromRects 7 [(1, Rect 0 0 500 600), (2, Rect 0 0 1007 600)] == Nothing
 
   let demoMinis = map sourceMini (songTracks demoSong)
   check ("demo minis " <> T.pack (show demoMinis)) (take 3 demoMinis == ["bd*4", "sn(3,8,2)", "[hh hh:2 hh [hh hh:1]]*2"])

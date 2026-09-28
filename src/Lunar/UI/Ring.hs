@@ -10,7 +10,6 @@ module Lunar.UI.Ring
 import Control.Monad (forM_, when)
 import Data.Text qualified as T
 import Lunar.Codegen (showNum)
-import Lunar.UI.Palette
 import Lunar.UI.Timeline (Lane (..), evNum, smallFont)
 import NanoUI
 import NanoUI.Path qualified as P
@@ -62,7 +61,7 @@ ring cps now playing selected lanes = do
             we = min (cyc + 1) (fromRational (wholeStop e))
             live = fromRational (wholeStart e) <= now && now < fromRational (wholeStop e)
             r = rMid + (if panned then realToFrac (evNum "pan" 0.5 e - 0.5) * band * 0.9 else 0)
-            gain = max 0.35 (min 1 (evNum "gain" 1 e / 1.2))
+            gain = max 0.35 (min 1 (realToFrac (evNum "gain" 1 e) / 1.2))
             sweep = max 0.02 (angleOf we - angleOf ws - 0.025)
         when (we > ws) $ do
           drawStrokePathWith
@@ -117,7 +116,7 @@ moonPhase c rad phase col = when (rad > 8) $ do
       -- The terminator runs back up an ellipse as wide as |k| of the disc,
       -- on the lit side while the moon is less than half lit.
       terminator = P.ellipticalArc c (V2 (abs k * rad) rad) 0 (pi / 2) (if k >= 0 then -side * pi else side * pi)
-      silver = lerpColor col (colorRGBA 255 255 255 255) 0.6
+      silver = lerpColor col colorWhite 0.6
   drawPath (P.circle c rad) (withAlpha silver 0.04)
   drawStrokePath (P.arc c rad 0 (2 * pi)) 1 (withAlpha silver 0.14)
   when (k < 0.99) $ do

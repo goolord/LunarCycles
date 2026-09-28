@@ -1,11 +1,11 @@
 packages: .
 
--- nano-ui is pinned to the HEAD of its main branch when LunarCycles was
--- started (feat(demo): a Tabs page).
+-- nano-ui is pinned to a commit on its main branch (refactor: simplify the
+-- API-gap changes).
 source-repository-package
   type: git
   location: https://github.com/goolord/nano-ui.git
-  tag: c6e766b2fc451194d44e57c2e7937a61afcb9c8e
+  tag: 2df50bba09b81f90d10ba20ce68563cc359822d8
   subdir:
     packages/nano-ui
     packages/nano-ui-sdl

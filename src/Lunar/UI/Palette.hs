@@ -2,7 +2,6 @@
 module Lunar.UI.Palette
   ( lunarTheme
   , trackColor
-  , withAlpha
   , monoSmall
   ) where
 
@@ -15,8 +14,7 @@ import NanoUI
 -- playhead and keyboard focus.
 lunarTheme :: Theme
 lunarTheme =
-  let colorRGB r g b = colorRGBA r g b 255
-      water = colorRGB 8 15 21
+  let water = colorRGB 8 15 21
       hull = colorRGB 23 36 48
       cap = colorRGB 43 61 80
       capHover = colorRGB 54 76 98
@@ -40,6 +38,7 @@ lunarTheme =
         , themeButton = (control . background cap . hoverBackground capHover . pressBackground hull) (themeButton defaultTheme)
         , themeInput = (control . borderColor inputRim . background water . hoverBackground inputHover . pressBackground water) (themeInput defaultTheme)
         , themeFloatingWindow = (control . background floating . cornerRadius 8) (themeFloatingWindow defaultTheme)
+        , themePopup = (control . background floating . cornerRadius 8) (themePopup defaultTheme)
         , themeSeparator = rule
         , themeAccent = moon
         , themeMuted = mist
@@ -55,7 +54,7 @@ lunarTheme =
         , themeFocusRing = moon
         , themeSelection = withAlpha harbour 0.3
         , themeLink = glass
-        , themeShadow = withAlpha water 0.6
+        , themeShadow = colorRGBA 3 7 14 220
         }
 
 -- | The colour of the track at a position in the song: sea glass, harbour
@@ -65,10 +64,7 @@ trackColor :: Theme -> Int -> Color
 trackColor th i = cycle palette !! max 0 i
   where
     palette = [themeGreen th, themePurple th, themeOrange th, kelp]
-    kelp = colorRGBA 188 208 114 255
-
-withAlpha :: Color -> Double -> Color
-withAlpha c a = colorRGBA (colorR c) (colorG c) (colorB c) (round (255 * max 0 (min 1 a)))
+    kelp = colorRGB 188 208 114
 
 -- | Small monospaced text, for code fragments inside the editors.
 monoSmall :: Layout -> Layout

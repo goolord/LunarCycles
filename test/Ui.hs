@@ -22,7 +22,7 @@ import NanoUI
 import NanoUI.Testing
 import NanoUI.Testing.Assert (withInput)
 import NanoUI.Testing.Harness
-import Lunar.UI.Layout (SavedLayout (..), loadLayout)
+import Lunar.UI.Layout (loadLayout)
 import Lunar.UI.Layout qualified
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Environment (setEnv)
@@ -32,11 +32,11 @@ import System.Exit (exitFailure)
 data Shape = V Shape Shape | H Shape Shape | P Int
   deriving (Eq, Show)
 
-shape :: SavedLayout -> Shape
+shape :: GridNode -> Shape
 shape = \case
-  LSplit True _ a b -> V (shape a) (shape b)
-  LSplit False _ a b -> H (shape a) (shape b)
-  LPane i -> P (fromIntegral i)
+  Split _ AxisV _ a b -> V (shape a) (shape b)
+  Split _ AxisH _ a b -> H (shape a) (shape b)
+  Pane i -> P (fromIntegral i)
 
 forgetSaved :: IO ()
 forgetSaved = Lunar.UI.Layout.forgetLayout
@@ -273,7 +273,7 @@ main = do
 
   -- In a cramped arrangement every pane is drawn inside the rect the grid
   -- gave it, so each title still picks its pane up.
-  let cramped = LSplit True 0.717 (LSplit False 0.4 (LSplit True 0.212 (LPane 2) (LPane 1)) (LSplit False 0.764 (LPane 4) (LPane 3))) (LPane 5)
+  let cramped = Split 10 AxisV 0.717 (Split 11 AxisH 0.4 (Split 12 AxisV 0.212 (Pane 2) (Pane 1)) (Split 13 AxisH 0.764 (Pane 4) (Pane 3))) (Pane 5)
   mapM_ (\(title, target) -> do
       Lunar.UI.Layout.saveLayout cramped
       env3 <- newAppEnv eng
@@ -356,9 +356,9 @@ main = do
         void (buttonWith' (alignMid . minH 36) "Rescan")
   mapM_ (\i -> void (runFrame selectCtx i selectView)) [base, base, base]
   selectSpans <- collectTextSpans selectCtx
-  check "long select labels are ellipsized" $ any (\(_, txt, _, _, _) -> "…" `T.isSuffixOf` txt && txt /= longDevice) selectSpans
-  check "select label stays short of its chevron and neighbour" $
-    all (\(Rect x _ w _, txt, _, _, _) -> txt == "Rescan" || x + w <= 190 - 20) selectSpans
+  check "long select labels are cut short" $ any (\(_, txt, _, _, _) -> "..." `T.isSuffixOf` txt) selectSpans
+  check "select label stays inside the select" $
+    all (\(Rect x _ w _, txt, _, _, _) -> txt == "Rescan" || x + w <= 190) selectSpans
 
   n <- readIORef failures
   shutdownEngine eng

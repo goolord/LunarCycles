@@ -13,7 +13,6 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Lunar.Model
 import Lunar.Refactor (miniToSteps)
-import Lunar.UI.Palette
 import Lunar.UI.Control
 import Lunar.UI.Timeline (monoFont, smallFont)
 import NanoUI
@@ -36,11 +35,12 @@ stepGrid col pitched beat steps = do
   (cursor, setCursor) <- useInt 0
   let n = length steps
   resp <-
-    focusCanvas
+    canvasConfigured
       defaultCanvasConfig
         { canvasLayout = fillW (fixedH 76 defaultLayout)
         , canvasTrackPointer = True
         , canvasCursor = Just (\_ _ _ -> UiCursorPointer)
+        , canvasFocusable = True
         }
       $ \r@(Rect x y w h) -> do
         cdc <- drawContext
@@ -72,7 +72,7 @@ stepGrid col pitched beat steps = do
           (zip [0 :: Int ..] steps)
   inp <- askInput
   (_, wheel) <- useWheelDeltaOn resp
-  key <- focusedKeys resp
+  nav <- useKeyNav (respId resp)
   let rect = respRect resp
       cell = cellAt rect n (v2X mouse)
       pressedNow = respPressed resp && pressedIn MouseLeft inp
@@ -89,11 +89,11 @@ stepGrid col pitched beat steps = do
           , Just v <- painted !! i ->
               replaceAt i (Just (clampStep pitched (v + signum (round (wheel * 4))))) painted
         _ -> painted
-      cursor' = max 0 (min (n - 1) (cursor + fromEnum (key KeyRight) - fromEnum (key KeyLeft)))
+      cursor' = max 0 (min (n - 1) (cursor + fromEnum (knRight nav) - fromEnum (knLeft nav)))
       keyed
         | n == 0 = wheeled
-        | key KeyEnter || key KeySpace = replaceAt cursor' (maybe (Just (lastValue steps)) (const Nothing) (wheeled !! cursor')) wheeled
-        | key KeyUp || key KeyDown = replaceAt cursor' (Just (clampStep pitched (maybe 0 id (wheeled !! cursor') + fromEnum (key KeyUp) - fromEnum (key KeyDown)))) wheeled
+        | knEnter nav || knSpace nav = replaceAt cursor' (maybe (Just (lastValue steps)) (const Nothing) (wheeled !! cursor')) wheeled
+        | knUp nav || knDown nav = replaceAt cursor' (Just (clampStep pitched (maybe 0 id (wheeled !! cursor') + fromEnum (knUp nav) - fromEnum (knDown nav)))) wheeled
         | otherwise = wheeled
   when (cursor' /= cursor) (setCursor cursor')
   when (activePaint /= paint) (setPaint activePaint)
