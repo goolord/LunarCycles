@@ -50,6 +50,7 @@ import NanoUI.Backend.Sdl
   , FileDialogResult (..)
   , FileFilter (..)
   , askOpenFileDialog
+  , askOpenFolderDialog
   , askSaveFileDialog
   , defaultFileDialogOptions
   , pollFileDialogUi
@@ -647,6 +648,13 @@ toolbarView env tb = do
   outs <- liftIO (midiOutputs eng)
   sel <- liftIO (selectedMidi eng)
   dirt <- liftIO (dirtStatus eng)
+  samples <- liftIO (samplesInfo eng)
+  (folderDialog, setFolderDialog) <- useState (Nothing :: Maybe FileDialogId)
+  forM_ folderDialog $ \did ->
+    pollFileDialogUi did >>= \case
+      FileDialogPending -> wakeAfter 0.1
+      FileDialogSelected (dir : _) -> setFolderDialog Nothing >> liftIO (setSampleFolder eng dir)
+      _ -> setFolderDialog Nothing
   ww <- windowWidth
   -- New and Open ask first when they would lose unsaved changes.
   let unlessDirty d act
@@ -720,7 +728,9 @@ toolbarView env tb = do
     when (ww >= 1100) $ labelWith (fontSize 12 . fixedW 132 . fontMuted . alignMid) readout
     flex
     let dirtOn = dirt `elem` [DirtOn, DirtStarting]
-        outputName = T.intercalate " + " ([fromMaybe "No MIDI" sel] <> ["SuperDirt" | dirtOn])
+        outputName = case ["Samples" | siPlaying samples] <> maybe [] pure sel <> ["SuperDirt" | dirtOn] of
+          [] -> "None"
+          names -> T.intercalate " + " names
         menuWidth = min 420 (ww - 24)
     fm <- uiFontMetrics
     outLabel <- truncateTextUi fm (min 220 (ww - 168)) outputName
@@ -730,6 +740,24 @@ toolbarView env tb = do
       popupWith outputOpen ((defaultPopupConfig (AnchorRect (respRect outResp))) {cfgPlacement = PlacementBelow, cfgOffset = 8}) (fixedW menuWidth) $
         columnWith (padAll 12 . tight . gap 12 . fillW) $ do
           wakeAfter 0.1
+          labelWith fontMedium "Samples"
+          rowWith (tight . gap 12 . fillW) $ do
+            (sResp, on) <- toggleSwitchWith' alignMid (siOn samples)
+            tooltip sResp "Play the patterns' samples in LunarCycles, from a folder laid out like Dirt-Samples"
+            when (on /= siOn samples) (liftIO (setSamples eng on))
+            wrappedText (fontMuted . fontSize 12 . alignMid) $ case (siError samples, siFolder samples) of
+              (Just e, _) -> e
+              (Nothing, Just dir) | siPlaying samples -> tshow (siSounds samples) <> " sounds in " <> T.pack dir
+              _ -> "Off"
+          chooseResp <- buttonWith' (minH 36 . padXY 12 8) "Choose folder…"
+          tooltip chooseResp "A folder of sound folders (bd, sn, …) holding WAV files"
+          when (respClicked chooseResp) $
+            askOpenFolderDialog defaultFileDialogOptions {dialogDefaultLocation = siFolder samples} >>= \case
+              Just did -> setFolderDialog (Just did)
+              Nothing -> pure ()
+          unless (null (siMissing samples) || not (siPlaying samples)) $
+            hint ("No samples for " <> T.intercalate ", " (siMissing samples) <> ". Play these through MIDI or SuperDirt.")
+          separator
           rowWith (tight . fillW . gap 12) $ do
             labelWith (fontMedium . alignMid) "MIDI output"
             flex

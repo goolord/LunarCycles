@@ -1,7 +1,10 @@
 module Main (main) where
 
 import Control.Monad (unless)
+import Data.ByteString.Builder qualified as B
+import Data.ByteString.Lazy qualified as BL
 import Data.IORef
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
@@ -11,8 +14,12 @@ import Lunar.Compile (Compiled (..), arrangeSong, byChannel, cError, compileSequ
 import Lunar.Model
 import Lunar.Project (songFromText, songToText)
 import Lunar.Refactor
-import Sound.Tidal.Pattern (eventHasOnset, wholeStart)
+import Lunar.Sampler
+import GHC.Clock (getMonotonicTime)
+import Sound.Tidal.Pattern (Value (..), eventHasOnset, wholeStart)
+import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removePathForcibly)
 import System.Exit (exitFailure)
+import System.FilePath ((</>))
 
 main :: IO ()
 main = do
@@ -122,5 +129,92 @@ main = do
       check "a first-format song merges its tracks into channels" (map chanName (songChannels old) == ["kick", "bass"])
       check "a first-format song keeps each sequence's rhythm" (map sourceMini (filter ((== "bass") . trackName) (concatMap (sequenceTracks old) (songSequences old))) == ["0 3", "7"])
     Left e -> check ("a first-format song reads: " <> e) False
+  samplerChecks check
   n <- readIORef failures
   unless (n == 0) exitFailure
+
+-- | The sampler, rendered offline from WAV files written here: a mono and a
+-- stereo @bd@, and a @bd@ at the highest frequency, to filter.
+samplerChecks :: (Text -> Bool -> IO ()) -> IO ()
+samplerChecks check = do
+  tmp <- getTemporaryDirectory
+  let bank = tmp </> "lunar-cycles-samples"
+  removePathForcibly bank
+  mapM_ (createDirectoryIfMissing True . (bank </>)) ["bd", "hh"]
+  BL.writeFile (bank </> "bd" </> "0.wav") (wav 44100 1 (replicate 4410 0.5))
+  BL.writeFile (bank </> "bd" </> "1.wav") (wav 48000 2 (concat (replicate 4800 [0.25, 0.5])))
+  BL.writeFile (bank </> "bd" </> "2.wav") (wav 48000 1 (take 4800 (cycle [0.5, -0.5])))
+  writeFile (bank </> "hh" </> "notes.txt") ""
+  offlineSampler 48000 bank >>= \case
+    Left e -> check ("the sampler opens a folder: " <> e) False
+    Right smp -> do
+      let near a b = abs (a - b) < 0.01
+          -- Play now, and render the next 6000 frames.
+          render ps = do
+            now <- getMonotonicTime
+            playEvent smp now (Map.fromList (("s", VS "bd") : ps))
+            renderFrames smp 6000
+          sounding = length . filter (\(l, r) -> abs l > 1e-4 || abs r > 1e-4)
+      check "folders without WAV files are not sounds" (samplerSoundCount smp == 1)
+      mono <- render []
+      check "a mono sample plays at SuperDirt's level, centred" (near (fst (mono !! 100)) 0.1414 && near (snd (mono !! 100)) 0.1414)
+      check ("a sample is resampled to the mixer's rate: " <> T.pack (show (sounding mono))) (abs (sounding mono - 4800) < 30)
+      left <- render [("pan", VF 0)]
+      check "pan 0 is hard left" (all ((< 1e-6) . abs . snd) left && near (fst (left !! 100)) 0.2)
+      stereo <- render [("n", VF 1)]
+      check "n picks the file, and stereo stays stereo" (near (fst (stereo !! 100)) 0.1 && near (snd (stereo !! 100)) 0.2)
+      wrapped <- render [("n", VF 4)]
+      check "n wraps around the folder" (near (fst (wrapped !! 100)) 0.1)
+      fast <- render [("speed", VF 2)]
+      check "speed 2 plays in half the time" (abs (sounding fast - 2400) < 30)
+      octave <- render [("note", VF 12)]
+      check "a note transposes by semitones" (abs (sounding octave - 2400) < 30)
+      back <- render [("speed", VF (-1))]
+      check "negative speed plays backwards" (abs (sounding back - 4800) < 30)
+      half <- render [("begin", VF 0.5)]
+      check "begin skips into the sample, fading in" (abs (sounding half - 2400) < 30 && fst (head half) == 0)
+      shaped <- render [("shape", VF 0.5)]
+      check "shape distorts as SuperDirt's does" (near (fst (shaped !! 100)) 0.212)
+      open <- render [("n", VF 2)]
+      closed <- render [("n", VF 2), ("cutoff", VF 200)]
+      let peak = maximum . map (abs . fst) . take 3000 . drop 1000
+      check "cutoff filters high frequencies" (peak open > 0.1 && peak closed < 0.01)
+      loud <- render [("gain", VF 1.2)]
+      check "gain rises with its fourth power" (near (fst (loud !! 100)) (0.1414 * 1.2 ^ (4 :: Int)))
+      now <- getMonotonicTime
+      playEvent smp (now + 0.01) (Map.fromList [("s", VS "bd")])
+      later <- renderFrames smp 1000
+      let start = length (takeWhile ((< 1e-4) . abs . fst) later)
+      check ("a note starts at its time: frame " <> T.pack (show start)) (start >= 470 && start <= 481)
+      _ <- renderFrames smp 6000
+      playEvent smp (now + 0.01) (Map.fromList [("s", VS "bd")])
+      cancelPending smp
+      cancelled <- renderFrames smp 2000
+      check "cancelling drops notes not yet started" (sounding cancelled == 0)
+      _ <- render [("s", VS "superpiano")]
+      missing <- missingSounds smp
+      check "sounds without samples are listed" (missing == ["superpiano"])
+      closeSampler smp
+  removePathForcibly bank
+
+-- | A 16-bit PCM WAV file of interleaved samples between -1 and 1.
+wav :: Int -> Int -> [Double] -> BL.ByteString
+wav rate channels xs =
+  B.toLazyByteString $
+    mconcat
+      [ B.string7 "RIFF"
+      , B.word32LE (36 + bytes)
+      , B.string7 "WAVEfmt "
+      , B.word32LE 16
+      , B.word16LE 1
+      , B.word16LE (fromIntegral channels)
+      , B.word32LE (fromIntegral rate)
+      , B.word32LE (fromIntegral (rate * channels * 2))
+      , B.word16LE (fromIntegral (channels * 2))
+      , B.word16LE 16
+      , B.string7 "data"
+      , B.word32LE bytes
+      , foldMap (B.int16LE . round . (* 32767)) xs
+      ]
+  where
+    bytes = fromIntegral (2 * length xs)

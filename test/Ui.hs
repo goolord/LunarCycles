@@ -342,7 +342,7 @@ main = do
       mapM_ frame [p, rel]
       idle
       outputSpans <- collectOverlayTextSpans ctx base
-      check "Output opens its controls" (all (`hasText` outputSpans) ["MIDI output", "Rescan", "SuperDirt"])
+      check "Output opens its controls" (all (`hasText` outputSpans) ["Samples", "Choose folder…", "MIDI output", "Rescan", "SuperDirt"])
       -- What Rescan reports goes in the status bar, on the line it already has.
       clickOverlay "Rescan"
       statusSpans <- collectTextSpans ctx

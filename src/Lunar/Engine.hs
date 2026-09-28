@@ -1,7 +1,7 @@
 -- | Playback: the transport clock the views draw from, a scheduler thread
--- that queries the patterns a little ahead of the clock and sends their
--- notes out through Euterpea's MIDI output, and an optional Tidal stream to
--- SuperDirt.
+-- that queries the patterns a little ahead of the clock and hands their
+-- notes to the built-in sampler and Euterpea's MIDI output, and an optional
+-- Tidal stream to SuperDirt.
 module Lunar.Engine
   ( Engine
   , MidiOut (..)
@@ -23,6 +23,10 @@ module Lunar.Engine
   , soundFont
   , fluidRunning
   , startFluid
+  , SamplesInfo (..)
+  , samplesInfo
+  , setSamples
+  , setSampleFolder
   , engineMessage
   ) where
 
@@ -32,7 +36,7 @@ import Control.Monad
 import Data.IORef
 import Data.List (find, isPrefixOf, isSuffixOf, sortOn)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (listToMaybe)
+import Data.Maybe (isJust, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Euterpea.IO.MIDI.MidiIO
@@ -49,8 +53,9 @@ import Euterpea.IO.MIDI.MidiIO
 import GHC.Clock (getMonotonicTime)
 import Lunar.Compile
 import Lunar.Midi
+import Lunar.Sampler
 import Sound.Tidal.ID (ID (..))
-import Sound.Tidal.Pattern (eventHasOnset, silence, wholeStart)
+import Sound.Tidal.Pattern (EventF (..), eventHasOnset, silence, wholeStart)
 import Sound.Tidal.Stream qualified as Tidal
 import System.Directory (doesDirectoryExist, getHomeDirectory, listDirectory)
 import System.Process (ProcessHandle, getProcessExitCode, spawnProcess, terminateProcess)
@@ -79,6 +84,14 @@ data MidiState = MidiState
     -- ^ The program each channel was last set to, so a change is sent once.
   }
 
+data SamplerState = SamplerState
+  { ssPrefs :: !SamplePrefs
+  , ssFolder :: !(Maybe FilePath)
+    -- ^ The folder chosen, or else where SuperCollider keeps Dirt-Samples.
+  , ssSampler :: !(Maybe Sampler)
+  , ssError :: !(Maybe Text)
+  }
+
 data DirtStatus = DirtOff | DirtStarting | DirtOn | DirtFailed !Text
   deriving (Eq, Show)
 
@@ -88,6 +101,7 @@ data Engine = Engine
   , engCursor :: !(IORef Double)
     -- ^ The cycle up to which notes have been sent.
   , engMidi :: !(MVar MidiState)
+  , engSampler :: !(MVar SamplerState)
   , engDirt :: !(IORef (Maybe Tidal.Stream))
   , engDirtStatus :: !(IORef DirtStatus)
   , engDirtIds :: !(IORef [String])
@@ -105,12 +119,17 @@ newEngine cps = do
   now <- getMonotonicTime
   midiOk <- try initializeMidi
   outs <- either (\(_ :: SomeException) -> pure []) (const listOutputs) midiOk
+  prefs <- loadSamplePrefs
+  folder <- maybe defaultSampleFolder (pure . Just) (spFolder prefs)
+  let samples = SamplerState prefs folder Nothing Nothing
+  sampler <- if spOn prefs then openIn samples else pure samples
   eng <-
     Engine
       <$> newIORef (Transport False cps now 0 0)
       <*> newIORef []
       <*> newIORef 0
       <*> newMVar (MidiState outs (defaultOutput outs) Map.empty)
+      <*> newMVar sampler
       <*> newIORef Nothing
       <*> newIORef DirtOff
       <*> newIORef []
@@ -137,6 +156,7 @@ shutdownEngine eng = do
   withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (allNotesOff . moId)
   _ <- try @SomeException terminateMidi
   mapM_ terminateProcess =<< readIORef (engFluid eng)
+  withMVar (engSampler eng) (mapM_ closeSampler . ssSampler)
 
 allNotesOff :: OutputDeviceID -> IO ()
 allNotesOff dev = do
@@ -157,7 +177,9 @@ setPlaying eng on = do
   when (on /= tPlaying t) $ do
     writeIORef (engTransport eng) t {tPlaying = on, tAnchorTime = now, tAnchorCycle = tStart t}
     writeIORef (engCursor eng) (tStart t)
-    unless on $ withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (allNotesOff . moId)
+    unless on $ do
+      withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (allNotesOff . moId)
+      withSampler eng cancelPending
     readIORef (engDirt eng) >>= mapM_ (\st -> when on (Tidal.streamSetCycle st (toRational (tStart t))))
     pushDirt eng
 
@@ -169,6 +191,7 @@ seekTo eng c = do
   playing <- atomicModifyIORef' (engTransport eng) $ \t ->
     (t {tAnchorTime = now, tAnchorCycle = c, tStart = c}, tPlaying t)
   writeIORef (engCursor eng) c
+  withSampler eng cancelPending
   when playing $ readIORef (engDirt eng) >>= mapM_ (\st -> Tidal.streamSetCycle st (toRational c))
 
 -- | Change tempo without a jump: the clock is re-anchored where it is now.
@@ -197,20 +220,21 @@ schedulerLoop eng = forever $ do
       (horizon, if c < cNow - 0.25 || c > horizon then cNow else c)
     when (horizon > from) $ do
       comps <- readIORef (engTracks eng)
-      let notes =
-            sortOn fst
-              [ ((on - cNow) / tCps t, n)
-              | c <- comps
-              , e <- eventsIn from horizon (cPattern c)
-              , eventHasOnset e
-              , let on = fromRational (wholeStart e)
-              , on >= from && on < horizon
-              , Just n <- [eventNote (tCps t) (cChannel c) e]
-              ]
+      let due =
+            [ (c, e, (on - cNow) / tCps t)
+            | c <- comps
+            , e <- eventsIn from horizon (cPattern c)
+            , eventHasOnset e
+            , let on = fromRational (wholeStart e)
+            , on >= from && on < horizon
+            ]
+          notes = sortOn fst [(delay, n) | (c, e, delay) <- due, Just n <- [eventNote (tCps t) (cChannel c) e]]
       unless (null notes) $ modifyMVar_ (engMidi eng) $ \ms ->
         case msSelected ms of
           Nothing -> pure ms
           Just out -> foldM (sendNote (moId out)) ms notes
+      unless (null due) $ withSampler eng $ \smp ->
+        forM_ due $ \(_, e, delay) -> playEvent smp (now + delay) (value e)
   withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (outputMidi . moId)
 
 sendNote :: OutputDeviceID -> MidiState -> (Double, MidiNote) -> IO MidiState
@@ -355,6 +379,64 @@ startFluid eng sf = do
           rescanMidi eng
           modifyMVar_ (engMidi eng) $ \ms ->
             pure ms {msSelected = maybe (msSelected ms) Just (find (("FLUID" `T.isInfixOf`) . T.toUpper . moName) (msOutputs ms))}
+
+-- | Where the built-in sampler stands. @siOn@ is the user's choice; the
+-- sampler may still not be playing, for want of a folder or a device, which
+-- @siError@ explains.
+data SamplesInfo = SamplesInfo
+  { siOn :: !Bool
+  , siPlaying :: !Bool
+  , siFolder :: !(Maybe FilePath)
+  , siSounds :: !Int
+  , siMissing :: ![Text]
+    -- ^ Sounds the patterns played that the folder has no samples for.
+  , siError :: !(Maybe Text)
+  }
+
+samplesInfo :: Engine -> IO SamplesInfo
+samplesInfo eng = withMVar (engSampler eng) $ \ss -> do
+  missing <- maybe (pure []) missingSounds (ssSampler ss)
+  pure
+    SamplesInfo
+      { siOn = spOn (ssPrefs ss)
+      , siPlaying = isJust (ssSampler ss)
+      , siFolder = ssFolder ss
+      , siSounds = maybe 0 samplerSoundCount (ssSampler ss)
+      , siMissing = missing
+      , siError = ssError ss
+      }
+
+withSampler :: Engine -> (Sampler -> IO ()) -> IO ()
+withSampler eng act = withMVar (engSampler eng) (mapM_ act . ssSampler)
+
+-- | Open the sampler on its folder, closing any open one first.
+openIn :: SamplerState -> IO SamplerState
+openIn ss = do
+  mapM_ closeSampler (ssSampler ss)
+  case ssFolder ss of
+    Nothing -> pure ss {ssSampler = Nothing, ssError = Just "No sample folder found. Choose one, such as Dirt-Samples."}
+    Just dir ->
+      openSampler dir >>= \case
+        Left e -> pure ss {ssSampler = Nothing, ssError = Just e}
+        Right smp -> pure ss {ssSampler = Just smp, ssError = Nothing}
+
+-- | Turn the sampler on or off, and remember the choice.
+setSamples :: Engine -> Bool -> IO ()
+setSamples eng on = modifyMVar_ (engSampler eng) $ \ss -> do
+  let prefs = (ssPrefs ss) {spOn = on}
+  saveSamplePrefs prefs
+  if on
+    then openIn ss {ssPrefs = prefs}
+    else do
+      mapM_ closeSampler (ssSampler ss)
+      pure ss {ssPrefs = prefs, ssSampler = Nothing, ssError = Nothing}
+
+-- | Play samples from a folder from now on, and remember it.
+setSampleFolder :: Engine -> FilePath -> IO ()
+setSampleFolder eng dir = modifyMVar_ (engSampler eng) $ \ss -> do
+  let prefs = SamplePrefs {spFolder = Just dir, spOn = True}
+  saveSamplePrefs prefs
+  openIn ss {ssPrefs = prefs, ssFolder = Just dir}
 
 engineMessage :: Engine -> IO Text
 engineMessage eng = readIORef (engMessage eng)
