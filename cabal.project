@@ -1,0 +1,36 @@
+packages: .
+
+-- nano-ui is pinned to the HEAD of its main branch when LunarCycles was
+-- started (feat(demo): a Tabs page).
+source-repository-package
+  type: git
+  location: https://github.com/goolord/nano-ui.git
+  tag: c6e766b2fc451194d44e57c2e7937a61afcb9c8e
+  subdir:
+    packages/nano-ui
+    packages/nano-ui-sdl
+
+-- Euterpea and its dependencies predate GHC 9.14's base and Cabal; they build
+-- unchanged once the upper bounds are lifted. tidal's own bounds stop short of
+-- the text and containers that ship with 9.14.
+allow-newer:
+  Euterpea:*,
+  PortMidi:*,
+  HCodecs:*,
+  arrows:*,
+  heap:*,
+  Stream:*,
+  lazysmallcheck:*,
+  tidal:*,
+  tidal-core:*,
+  tidal-link:*,
+  hosc:*
+
+package nano-ui-sdl
+  flags: +sdl
+
+-- The pinned sdl3-bindgen-sys bakes ABI assertions for SDL 3.4.14 headers;
+-- SDL 3.4.16 added SDL_PenProximityEvent.pen_state, so they fail to compile
+-- against newer headers without changing any field the backend reads.
+package sdl3-bindgen-sys
+  flags: -abi-assertions

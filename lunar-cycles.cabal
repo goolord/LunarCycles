@@ -1,0 +1,103 @@
+cabal-version:      3.4
+name:               lunar-cycles
+version:            0.1.0.0
+synopsis:           A visual sequencer for TidalCycles patterns
+description:
+    Draws TidalCycles patterns on a ring and a multi-track timeline, edits
+    them with step grids, euclidean rings, draggable transform blocks and
+    modulated parameter knobs, and writes the Tidal code for what is on
+    screen. Patterns are evaluated by tidal-core; notes go out over MIDI
+    through Euterpea and, optionally, to SuperDirt over OSC.
+license:            GPL-3.0-or-later
+author:             Zachary Churchill
+maintainer:         zacharyachurchill@gmail.com
+category:           Sound
+build-type:         Simple
+
+common shared
+    default-language: GHC2024
+    default-extensions:
+        DuplicateRecordFields
+        OverloadedStrings
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wredundant-constraints
+        -Wunused-packages
+
+library
+    import:           shared
+    hs-source-dirs:   src
+    exposed-modules:
+        Lunar.Catalog
+        Lunar.Codegen
+        Lunar.Compile
+        Lunar.Engine
+        Lunar.Midi
+        Lunar.Model
+        Lunar.Refactor
+        Lunar.UI
+        Lunar.UI.Chain
+        Lunar.UI.Code
+        Lunar.UI.Control
+        Lunar.UI.Editors
+        Lunar.UI.Knob
+        Lunar.UI.Layout
+        Lunar.UI.Palette
+        Lunar.UI.Ring
+        Lunar.UI.Timeline
+    build-depends:
+        base >=4.20 && <4.23,
+        containers >=0.7 && <0.9,
+        directory ^>=1.3,
+        Euterpea ^>=2.0.7,
+        filepath ^>=1.5,
+        nano-ui ^>=0.2,
+        process ^>=1.6,
+        text >=2.1 && <2.2,
+        tidal ^>=1.10,
+        tidal-core ^>=1.10
+
+executable lunar-cycles
+    import:           shared
+    hs-source-dirs:   app
+    main-is:          Main.hs
+    ghc-options:
+        -threaded
+        -rtsopts
+        "-with-rtsopts=-N2 -A32m -I0"
+    build-depends:
+        base,
+        bytestring ^>=0.12,
+        JuicyPixels ^>=3.3,
+        lunar-cycles,
+        nano-ui,
+        nano-ui-sdl ^>=0.2,
+        vector ^>=0.13
+
+test-suite lunar-cycles-test
+    import:           shared
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    build-depends:
+        base,
+        lunar-cycles,
+        nano-ui,
+        text,
+
+test-suite lunar-cycles-ui-test
+    import:           shared
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Ui.hs
+    ghc-options:      -threaded
+    build-depends:
+        base,
+        containers,
+        directory,
+        lunar-cycles,
+        nano-ui,
+        text
