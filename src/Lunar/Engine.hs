@@ -27,6 +27,7 @@ module Lunar.Engine
   , samplesInfo
   , setSamples
   , setSampleFolder
+  , setProjectSampleFolder
   , engineMessage
   ) where
 
@@ -453,6 +454,20 @@ setSampleFolder eng dir = modifyMVar_ (engSampler eng) $ \ss -> do
   let prefs = SamplePrefs {spFolder = Just dir, spOn = True}
   saveSamplePrefs prefs
   openIn ss {ssPrefs = prefs, ssFolder = Just dir}
+
+-- | Use a project's bundled bank while it is open, without changing the
+-- user's configured sample folder. Clearing it restores that folder or the
+-- system Dirt-Samples bank.
+setProjectSampleFolder :: Engine -> Maybe FilePath -> IO ()
+setProjectSampleFolder eng projectFolder = modifyMVar_ (engSampler eng) $ \ss -> do
+  configured <- maybe defaultSampleFolder (pure . Just) (spFolder (ssPrefs ss))
+  let next = ss {ssFolder = projectFolder `orFolder` configured}
+  if spOn (ssPrefs ss)
+    then openIn next
+    else pure next {ssSampler = Nothing, ssError = Nothing}
+  where
+    orFolder (Just folder) _ = Just folder
+    orFolder Nothing fallback = fallback
 
 engineMessage :: Engine -> IO Text
 engineMessage eng = readIORef (engMessage eng)

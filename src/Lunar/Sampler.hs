@@ -18,6 +18,7 @@ module Lunar.Sampler
   , loadSamplePrefs
   , saveSamplePrefs
   , defaultSampleFolder
+  , projectSampleFolder
   ) where
 
 import Control.Concurrent.MVar
@@ -45,8 +46,9 @@ import System.Directory
   , getHomeDirectory
   , getXdgDirectory
   , listDirectory
+  , makeAbsolute
   )
-import System.FilePath (takeExtension, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
 import Text.Read (readMaybe)
 
 data CSampler
@@ -216,3 +218,17 @@ defaultSampleFolder = do
   xdgData <- getXdgDirectory XdgData "SuperCollider"
   let quarks base = base </> "downloaded-quarks" </> "Dirt-Samples"
   listToMaybe <$> filterM doesDirectoryExist (map quarks [xdgData, home </> "Library" </> "Application Support" </> "SuperCollider"])
+
+-- | A sample bank bundled beside a project, using the folder names as sound
+-- identifiers and the WAV paths found inside them as the local resolution.
+projectSampleFolder :: FilePath -> IO (Maybe FilePath)
+projectSampleFolder projectPath = do
+  absolute <- makeAbsolute projectPath
+  let parent = takeDirectory absolute
+      candidates = map (parent </>) ["samples", "Samples", "Dirt-Samples"]
+  valid <- filterM hasSamples candidates
+  pure (listToMaybe valid)
+  where
+    hasSamples path = do
+      result <- try @SomeException (scanFolder path)
+      pure (either (const False) (not . Map.null) result)

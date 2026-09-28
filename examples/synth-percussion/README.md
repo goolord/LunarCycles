@@ -28,15 +28,14 @@ The WAV files are kept in Git LFS. Without `git lfs` installed when you
 clone, they are small pointer files the sampler cannot play: install it and
 run `git lfs pull`.
 
-1. Choose **Output ▾ → Samples → Choose folder…** and pick
-   `examples/synth-percussion/samples`.
-2. Choose **Project ▾ → Open…** and pick `synth-percussion.lunar`.
-3. Switch the transport to **Song** to hear the whole arrangement, or stay
+1. Choose **Project ▾ → Open…** and pick `synth-percussion.lunar`. LunarCycles
+   finds this project's sibling `samples/` folder automatically.
+2. Switch the transport to **Song** to hear the whole arrangement, or stay
    on **Sequence** to loop the one you are editing.
 
-The sampler remembers the folder, so switch back to Dirt-Samples the same
-way. The snare's `room` is for SuperDirt; the built-in sampler has no reverb
-yet.
+The bundled folder is used for this project only. Other projects use your
+chosen sample folder or Dirt-Samples if it is installed. The snare's `room` is
+for SuperDirt; the built-in sampler has no reverb yet.
 
 ## Credits
 

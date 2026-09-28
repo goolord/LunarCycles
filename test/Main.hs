@@ -141,12 +141,20 @@ samplerChecks :: (Text -> Bool -> IO ()) -> IO ()
 samplerChecks check = do
   tmp <- getTemporaryDirectory
   let bank = tmp </> "lunar-cycles-samples"
+      projectDir = tmp </> "lunar-cycles-project"
+      projectBank = projectDir </> "samples"
+      projectPath = projectDir </> "song.lunar"
   removePathForcibly bank
+  removePathForcibly projectDir
   mapM_ (createDirectoryIfMissing True . (bank </>)) ["bd", "hh"]
   BL.writeFile (bank </> "bd" </> "0.wav") (wav 44100 1 (replicate 4410 0.5))
   BL.writeFile (bank </> "bd" </> "1.wav") (wav 48000 2 (concat (replicate 4800 [0.25, 0.5])))
   BL.writeFile (bank </> "bd" </> "2.wav") (wav 48000 1 (take 4800 (cycle [0.5, -0.5])))
   writeFile (bank </> "hh" </> "notes.txt") ""
+  createDirectoryIfMissing True (projectBank </> "bd")
+  BL.writeFile (projectBank </> "bd" </> "0.wav") (wav 48000 1 (replicate 4800 0.5))
+  resolvedBank <- projectSampleFolder projectPath
+  check "a project resolves its sibling samples folder" (resolvedBank == Just projectBank)
   offlineSampler 48000 bank >>= \case
     Left e -> check ("the sampler opens a folder: " <> e) False
     Right smp -> do
@@ -198,6 +206,7 @@ samplerChecks check = do
       check "sounds without samples are listed" (missing == ["superpiano"])
       closeSampler smp
   removePathForcibly bank
+  removePathForcibly projectDir
 
 -- | The example song and its sample folder: the song reads and compiles,
 -- every sound it plays has a folder, and every file in the folder sounds.

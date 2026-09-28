@@ -32,6 +32,7 @@ import Lunar.Midi (exportMidi)
 import Lunar.Model
 import Lunar.Project
 import Lunar.Refactor (miniToSteps)
+import Lunar.Sampler (projectSampleFolder)
 import Lunar.UI.Chain (transformChain)
 import Lunar.UI.Code (codeView)
 import Lunar.UI.Control (selectField, wrappedText)
@@ -314,7 +315,10 @@ lunarView env = styled (const lunarTheme) $ do
         ProjectOps
           { opDirty = dirty
           , opName = maybe "this song" projectName (projPath project)
-          , opNew = replaceSong blankSong Nothing >> setStatus "New song"
+          , opNew = do
+              replaceSong blankSong Nothing
+              liftIO (setProjectSampleFolder eng Nothing)
+              setStatus "New song"
           , opOpen = startDialog ForOpen =<< askOpenFileDialog defaultFileDialogOptions {dialogFilters = [songFilter]}
           , opSave = maybe saveAs saveTo (projPath project)
           , opSaveAs = saveAs
@@ -335,7 +339,11 @@ lunarView env = styled (const lunarTheme) $ do
           ForOpen ->
             liftIO (loadSong path) >>= \case
               Left e -> setStatus e
-              Right s -> replaceSong s (Just path) >> setStatus ("Opened " <> T.pack path)
+              Right s -> do
+                sampleFolder <- liftIO (projectSampleFolder path)
+                liftIO (setProjectSampleFolder eng sampleFolder)
+                replaceSong s (Just path)
+                setStatus ("Opened " <> T.pack path)
           ForSave -> saveTo path
           ForExport -> exportTo path
       _ -> setDialog Nothing
