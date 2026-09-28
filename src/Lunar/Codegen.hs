@@ -5,9 +5,12 @@ module Lunar.Codegen
   ( Tok (..)
   , TokClass (..)
   , Line
+  , CodeLines
   , songCode
-  , songCodeTagged
-  , songCodeText
+  , sequenceCode
+  , arrangementCode
+  , codeText
+  , bindingNames
   , trackCode
   , transformCode
   , sourceMini
@@ -17,9 +20,10 @@ module Lunar.Codegen
   , paramCode
   , showNum
   , showRat
-  , channelNumbers
   ) where
 
+import Data.Char (isAlphaNum, isAsciiLower, toLower)
+import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Ratio (denominator, numerator)
 import Data.Text (Text)
@@ -178,53 +182,148 @@ signalCode sig period = case sig of
 plain :: Text -> Tok
 plain = Tok TkPlain
 
--- | One track as a @dN $ ...@ block: transforms outermost first, then the
--- sound and its parameters. A muted track, or one another track's solo
--- silences, is commented out.
-trackCode :: Bool -> Int -> Track -> [Line]
-trackCode silenced channel t =
-  map (if silenced then comment else id) $
-    case chainLines of
-      [] -> (lead <> base) : paramLines
-      c : cs -> (lead <> c) : map (cont <>) cs <> [cont <> base] <> paramLines
+-- | Code lines, each with the id of the track it belongs to, if any.
+type CodeLines = [(Maybe Int, Line)]
+
+-- | A track's expression over lines: its transforms outermost first, then
+-- the sound, then a line for each parameter. Lines after the first start
+-- with the @$@ or @#@ that joins them, and the caller indents them.
+trackLines :: Track -> [Line]
+trackLines t = case map (transformCode . snd) (trackChain t) of
+  [] -> base : paramLines
+  c : cs -> c : map (dollar <>) cs <> [dollar <> base] <> paramLines
   where
-    lead = [Tok TkFunc ("d" <> tshow channel), Tok TkOp " $ "]
-    cont = [plain "   ", Tok TkOp "$ "]
-    chainLines = map (transformCode . snd) (trackChain t)
+    dollar = [Tok TkOp "$ "]
     mini = Tok TkString ("\"" <> sourceMini t <> "\"")
-    pitched = isPitched (trackSound t)
     base
-      | pitched =
+      | isPitched (trackSound t) =
           [Tok TkFunc "note", plain " ", mini, plain " ", Tok TkOp "# ", Tok TkFunc "s", plain " ", Tok TkString ("\"" <> trackSound t <> "\"")]
       | otherwise = [Tok TkFunc "s", plain " ", mini]
-    paramLines =
-      [ plain "   " : paramCode p (paramExpr p s)
-      | (p, s) <- Map.toList (trackParams t)
-      , paramActive p s
-      ]
-    comment line = Tok TkComment ("-- " <> T.concat (map tokText line)) : []
+    paramLines = [paramCode p (paramExpr p s) | (p, s) <- Map.toList (trackParams t), paramActive p s]
 
--- | The channel number each track plays on, @d1@ for the first.
-channelNumbers :: Song -> [(Int, Track)]
-channelNumbers = zip [1 ..] . songTracks
+-- | One track as a @dN $ ...@ block. A muted track, or one another track's
+-- solo silences, is commented out.
+trackCode :: Bool -> Int -> Track -> [Line]
+trackCode silenced channel t =
+  map (if silenced then comment else id) (zipWith (<>) (lead : repeat [plain "   "]) (trackLines t))
+  where
+    lead = [Tok TkFunc ("d" <> tshow channel), Tok TkOp " $ "]
 
-songCode :: Song -> [Line]
-songCode = map snd . songCodeTagged
+comment :: Line -> Line
+comment line = [Tok TkComment ("-- " <> T.concat (map tokText line))]
 
--- | The song's code, each line with the id of the track it belongs to.
-songCodeTagged :: Song -> [(Maybe Int, Line)]
-songCodeTagged song =
-  (Nothing, [Tok TkFunc "setcps", plain " ", Tok TkNumber (showNum (fromIntegral (round (songCps song * 10000) :: Int) / 10000))])
+-- | Tracks that sound: all but the muted ones, or only the soloed ones.
+silencedIn :: [Track] -> Track -> Bool
+silencedIn tracks t = trackMuted t || (any trackSolo tracks && not (trackSolo t))
+
+setcpsLine :: Song -> (Maybe Int, Line)
+setcpsLine song = (Nothing, [Tok TkFunc "setcps", plain " ", Tok TkNumber (showNum (fromIntegral (round (songCps song * 10000) :: Int) / 10000))])
+
+-- | The code for what the transport plays: the sequence being edited, or
+-- the playlist. Lines of the edited sequence's tracks carry their ids.
+songCode :: PlayMode -> Int -> Song -> CodeLines
+songCode mode current song = case mode of
+  PlaySequence -> sequenceCode song (findSequence current song)
+  PlaySong -> arrangementCode current song
+
+-- | A sequence as live code: a channel for each track, @d1@ for the first.
+sequenceCode :: Song -> Maybe Sequence -> CodeLines
+sequenceCode song msq =
+  setcpsLine song
     : concat
-      [ (Nothing, []) : map ((,) (Just (trackId t))) (trackCode (silenced t) ch t)
-      | (ch, t) <- channelNumbers song
+      [ (Nothing, []) : map ((,) (Just (trackId t))) (trackCode (silencedIn tracks t) ch t)
+      | (ch, t) <- zip [1 ..] tracks
       ]
   where
-    anySolo = any trackSolo (songTracks song)
-    silenced t = trackMuted t || (anySolo && not (trackSolo t))
+    tracks = maybe [] seqTracks msq
 
-songCodeText :: Song -> Text
-songCodeText = T.unlines . map (T.concat . map tokText) . songCode
+-- | The playlist as live code: each placed sequence bound to its name as a
+-- @stack@ of its tracks, and one channel that plays them where the
+-- playlist puts them, looping at the playlist's end.
+--
+-- > let groove = stack
+-- >       [ s "bd*4"
+-- >       , s "~ sn"
+-- >       ]
+-- > d1 $ timeLoop 8 $ seqP
+-- >    [ (0, 8, groove)
+-- >    ]
+arrangementCode :: Int -> Song -> CodeLines
+arrangementCode current song
+  | null clips =
+      [ setcpsLine song
+      , (Nothing, [])
+      , (Nothing, [Tok TkComment "-- The playlist is empty. Place a sequence on it to hear the song."])
+      , (Nothing, [Tok TkFunc "d1", Tok TkOp " $ ", Tok TkFunc "silence"])
+      ]
+  | otherwise =
+      [setcpsLine song, (Nothing, [])]
+        <> concat (zipWith binding [0 :: Int ..] placed)
+        <> [(Nothing, [])]
+        <> [(Nothing, [Tok TkFunc "d1", Tok TkOp " $ ", Tok TkFunc "timeLoop", plain " ", Tok TkNumber (tshow (songLength song)), Tok TkOp " $ ", Tok TkFunc "seqP"])]
+        <> zipWith clipLine [0 :: Int ..] clips
+        <> [(Nothing, [plain "   ]"])]
+  where
+    clips = sortOn (\c -> (clipStart c, clipLane c)) (songPlaylist song)
+    names = bindingNames song
+    nameOf sid = Map.findWithDefault "silence" sid names
+    placed = [sq | sq <- songSequences song, any ((== seqId sq) . clipSequence) clips]
+    clipLine i c =
+      ( Nothing
+      , [ plain (if i == 0 then "   [ (" else "   , (")
+        , Tok TkNumber (tshow (clipStart c))
+        , plain ", "
+        , Tok TkNumber (tshow (clipEnd c))
+        , plain (", " <> nameOf (clipSequence c) <> ")")
+        ]
+      )
+    binding i sq =
+      let tracks = seqTracks sq
+          tag t = if seqId sq == current then Just (trackId t) else Nothing
+          lead = plain ((if i == 0 then "let " else "    ") <> nameOf (seqId sq) <> " = ")
+          audibleIds = [trackId t | t <- tracks, not (silencedIn tracks t)]
+          element t
+            | silencedIn tracks t = [(tag t, plain "      " : comment l) | l <- trackLines t]
+            | otherwise =
+                let sep = if take 1 audibleIds == [trackId t] then "[ " else ", "
+                 in zipWith (\p l -> (tag t, plain p : l)) (("      " <> sep) : repeat "        ") (trackLines t)
+          body = concatMap element tracks
+       in if null audibleIds
+            then (Nothing, [lead, Tok TkFunc "stack", plain " []"]) : body
+            else (Nothing, [lead, Tok TkFunc "stack"]) : body <> [(Nothing, [plain "      ]"])]
+
+-- | The name each sequence is bound to in the playlist's code: its own name
+-- as a Haskell identifier, kept clear of keywords, of the functions the
+-- code calls, and of the other sequences' names.
+bindingNames :: Song -> Map.Map Int Text
+bindingNames song = snd (foldl pick ([], Map.empty) (songSequences song))
+  where
+    pick (taken, acc) sq =
+      let base = identifier (seqName sq)
+          candidates = base : [base <> "_" <> tshow (seqId sq)] <> [base <> "_" <> tshow n | n <- [2 :: Int ..]]
+          name = case [c | c <- candidates, c `notElem` taken, c `notElem` reserved] of
+            c : _ -> c
+            [] -> base
+       in (name : taken, Map.insert (seqId sq) name acc)
+    identifier txt =
+      let cleaned = T.map (\ch -> if isAlphaNum ch || ch == '_' then toLower ch else '_') (T.strip txt)
+          trimmed = T.dropWhile (== '_') cleaned
+       in case T.uncons trimmed of
+            Nothing -> "part"
+            Just (ch, _)
+              | isAsciiLower ch -> trimmed
+              | otherwise -> "part_" <> trimmed
+    reserved =
+      [ "case", "class", "data", "default", "deriving", "do", "else", "foreign", "if", "import", "in", "infix"
+      , "infixl", "infixr", "instance", "let", "module", "newtype", "of", "then", "type", "where", "_"
+      , "stack", "seqP", "timeLoop", "silence", "s", "n", "note", "d1", "setcps", "range", "slow", "fast"
+      , "sine", "tri", "saw", "square", "rand", "perlin", "rev", "every", "jux", "off", "ply", "iter"
+      , "rot", "chop", "striate", "hurry", "brak", "palindrome", "degradeBy", "sometimes", "whenmod"
+      , "cutoff", "resonance", "gain", "pan", "speed", "begin", "end", "room", "shape", "hush"
+      ]
+
+codeText :: CodeLines -> Text
+codeText = T.unlines . map (T.concat . map tokText . snd)
 
 tshow :: Show a => a -> Text
 tshow = T.pack . show

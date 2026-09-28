@@ -9,6 +9,16 @@ import Data.Text qualified as T
 import Lunar.Codegen (Line, Tok (..), TokClass (..))
 import NanoUI
 
+-- | Rich text drops a line's leading spaces, so the indentation that lines
+-- continuations up under their expression is drawn as no-break spaces.
+keepIndent :: Line -> Line
+keepIndent = \case
+  [] -> []
+  t : ts ->
+    let (lead, rest) = T.span (== ' ') (tokText t)
+        t' = t {tokText = T.replicate (T.length lead) "\x00A0" <> rest}
+     in if T.null rest then t' : keepIndent ts else t' : ts
+
 codeView :: Maybe (Int, Color) -> [(Maybe Int, Line)] -> NanoUI ()
 codeView selected code = do
   th <- uiTheme
@@ -26,7 +36,7 @@ codeView selected code = do
       marked tag = case (selected, tag) of
         (Just (tid, col), Just t) | t == tid -> Just col
         _ -> Nothing
-      text line = void (richTextWith (fillW . fontMono . fontSize 13) (map piece line))
+      text line = void (richTextWith (fillW . fontMono . fontSize 13) (map piece (keepIndent line)))
   scrollWith (fillW . fillH) $
     columnWith (tight . gap 0 . fillW) $
       forM_ (zip [0 :: Int ..] code) $ \(i, (tag, line)) -> withKey i $

@@ -5,8 +5,8 @@ synopsis:           A visual sequencer for TidalCycles patterns
 description:
     Draws TidalCycles patterns on a ring and a multi-track timeline, edits
     them with step grids, euclidean rings, draggable transform blocks and
-    modulated parameter knobs, and writes the Tidal code for what is on
-    screen. Patterns are evaluated by tidal-core; notes go out over MIDI
+    modulated parameter knobs, chains sequences of tracks on a playlist,
+    and writes the Tidal code for what is on screen. Patterns are evaluated by tidal-core; notes go out over MIDI
     through Euterpea and, optionally, to SuperDirt over OSC.
 license:            GPL-3.0-or-later
 author:             Zachary Churchill
@@ -37,6 +37,7 @@ library
         Lunar.Engine
         Lunar.Midi
         Lunar.Model
+        Lunar.Project
         Lunar.Refactor
         Lunar.UI
         Lunar.UI.Chain
@@ -46,6 +47,7 @@ library
         Lunar.UI.Knob
         Lunar.UI.Layout
         Lunar.UI.Palette
+        Lunar.UI.Playlist
         Lunar.UI.Ring
         Lunar.UI.Timeline
     build-depends:
@@ -55,6 +57,7 @@ library
         Euterpea ^>=2.0.7,
         filepath ^>=1.5,
         nano-ui ^>=0.2,
+        nano-ui-sdl ^>=0.2,
         process ^>=1.6,
         text >=2.1 && <2.2,
         tidal ^>=1.10,
@@ -87,6 +90,7 @@ test-suite lunar-cycles-test
         lunar-cycles,
         nano-ui,
         text,
+        tidal-core,
 
 test-suite lunar-cycles-ui-test
     import:           shared

@@ -60,22 +60,38 @@ pane titles, 20 for the product name, and 24–32 for the cycle readout.
 
 ## Composition
 
+Three views share the transport and each give one kind of work the room
+it needs. A tab row under the transport switches them, as do Ctrl+1, 2 and
+3, and each view keeps its own pane arrangement.
+
 ```text
-Transport / tempo / output
-┌─────────────┬───────────────────────────┐
-│ Cycle       │ Timeline                  │
-│             ├────────────────┬──────────┤
-├─────────────┤ Track editor   │ Tidal    │
-│ Tracks      │                │ code     │
-└─────────────┴────────────────┴──────────┘
-Playback state / track count / transport shortcut
+Project / undo / transport / Sequence·Song / tempo / output
+Arrange   Pattern   Code
+
+Arrange                      Pattern                      Code
+┌─────────────────────┐      ┌───────┬─────────────┐      ┌──────────┬──────────┐
+│ Playlist            │      │ Cycle │ Timeline    │      │ Code     │ Editor   │
+│                     │      │       ├─────────────┤      │          │          │
+├──────┬──────────────┤      ├───────┤ Editor      │      │          ├──────────┤
+│Tracks│ Timeline     │      │Tracks │             │      │          │ Tracks   │
+└──────┴──────────────┘      └───────┴─────────────┘      └──────────┴──────────┘
+Playback state / what loops / track count / transport shortcut
 ```
 
-- A listening column occupies 28% of the default desktop workspace. Its
-  circular score shows one cycle; the wider timeline compares several.
-- At widths below 1100 logical pixels, view tabs focus one instrument.
-  Choosing a track opens its editor. Compact navigation preserves the saved
-  desktop arrangement.
+- Arrange gives the playlist the full width and 60% of the height; the
+  edited sequence's tracks (for mute and solo) and timeline sit under it.
+  A double-click on a clip opens its sequence in Pattern.
+- Pattern is the original listening column beside the timeline and a
+  full-width editor.
+- Code puts the generated code beside the editor, so a change and the code
+  it writes are read together; the track list stays for mute and solo.
+
+- In Pattern, a listening column occupies 27% of the width. Its circular
+  score shows one cycle; the wider timeline compares several.
+- At widths below 1100 logical pixels, the view tabs give way to a tab for
+  each of the six panes, which focus one instrument at a time. Choosing a
+  track opens its editor. Compact navigation preserves the views' saved
+  arrangements.
 - Recessed 7-pixel gutters mark draggable boundaries. Pane padding is 16
   pixels horizontally and 12 vertically; larger gaps separate editing tasks.
 - Labels and code align left. The circular readout and its legend center on
@@ -84,6 +100,43 @@ Playback state / track count / transport shortcut
   transformation chain. This matters especially when code is in another view.
 - Timeline rules mark actual cycle and beat boundaries. Event edges mark
   onsets; split events show pan, and curves show real parameter signals.
+
+## Sequences and the playlist
+
+A song is a set of sequences, each a group of tracks, and a playlist that
+places them in time, the way a DAW arranges patterns. The track list,
+editor, cycle and timeline always show the sequence being edited. The
+transport's Sequence/Song switch picks what plays. Sequence mode loops the
+edited sequence as `d1`…`dN`, as before. Song mode plays the playlist, and
+the code becomes the playlist itself: each placed sequence bound to its name
+as a `stack`, and `d1 $ timeLoop <end> $ seqP [(start, end, name)]`. Tidal's
+`seqP` starts each clip from its sequence's cycle 0, and the app compiles
+through the same `seqP` and `timeLoop`, so the song on screen is the one that
+plays. In Song mode the cycle and timeline show the edited sequence as the
+song plays it, silent outside its clips.
+
+Clips are Cap-coloured blocks with the Rim, drawn with their tracks' notes
+in the track colours, so colour still belongs to tracks. Clips of the edited
+sequence are lit a little and outlined in Moonlight; the selected clip gets
+a heavier outline. A muted bar and flag mark where the song loops. The moon
+playhead shows only in Song mode.
+
+The sequence list beside the grid chooses what is edited and what a click
+places; its "⋯" holds name, length, Duplicate and Delete. A click on an
+empty lane places a clip, a drag moves it along and across lanes in whole
+cycles, and its right edge stretches it. The lane count is held while a
+clip is dragged, so lanes don't resize under the pointer. Right-click, or
+Delete while pointing at it, removes a clip. The grid takes no keyboard
+focus, so Space still plays. A press on the ruler sets where Play starts
+and Stop returns, and switches to Song mode.
+
+Edits undo with Ctrl+Z and redo with Ctrl+Shift+Z or Ctrl+Y, or with the
+arrows beside Project. One drag is one step, as is a burst of typing or
+scrolling within a second. The Project menu opens and saves `.lunar` files
+through the native file dialogs, and asks before New or Open discards
+unsaved changes. It also exports MIDI: 16 cycles of the sequence, or the
+whole song in Song mode. The window title names the file and marks unsaved
+changes.
 
 ## Interaction
 
@@ -161,7 +214,13 @@ every pane size.
 
 The pane grid holds each pane to the rect its split gives it; content that
 wants more room scrolls or clips inside the pane instead of pushing its
-neighbours out of place. A pane is dragged by its whole title bar. A pane
+neighbours out of place. Each pane frame is capped at that rect, because a
+pane's content otherwise set its minimum and moved the dividers as tracks
+were added, or when the song's longer code appeared. Each view's
+arrangement is saved to its own file (`layout-arrange`, `layout-pattern`,
+`layout-code`); one that does not hold exactly the view's panes is set
+aside for the view's starting arrangement. Reset layout resets only the
+view on screen. A pane is dragged by its whole title bar. A pane
 too narrow for its header controls shows only its title and maximize
 button. The arrangement is saved when a drag or resize lets go, and Reset
 layout hands the grid the starting arrangement and forgets the saved one.

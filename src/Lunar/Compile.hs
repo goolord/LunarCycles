@@ -3,7 +3,9 @@
 -- own parser, and each transform is the Tidal function of the same name.
 module Lunar.Compile
   ( Compiled (..)
-  , compileSong
+  , compileSequence
+  , arrangeSong
+  , sequencePreview
   , compileTrack
   , audible
   , transformFn
@@ -14,6 +16,7 @@ module Lunar.Compile
   , valueText
   ) where
 
+import Data.List (mapAccumL)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -39,8 +42,38 @@ data Compiled = Compiled
     -- ^ Each modulated parameter's signal, for reading its value live.
   }
 
-compileSong :: Song -> [Compiled]
-compileSong song = zipWith compileTrack [1 ..] (songTracks song)
+-- | A sequence's tracks, each on the channel its code gives it: @d1@ for
+-- the first.
+compileSequence :: Sequence -> [Compiled]
+compileSequence = zipWith compileTrack [1 ..] . seqTracks
+
+-- | Every sequence's tracks as the playlist plays them, by sequence id. A
+-- track sounds only inside its sequence's clips, where the sequence starts
+-- from its own cycle 0 (Tidal's @seqP@), and the playlist loops at its end
+-- (@timeLoop@). Stacking a sequence's tracks commutes with both, so this is
+-- the pattern "Lunar.Codegen"'s @arrangementCode@ writes. Channels count on
+-- across sequences, so every track keeps a MIDI channel of its own.
+arrangeSong :: Song -> [(Int, [Compiled])]
+arrangeSong song = snd (mapAccumL place 1 (songSequences song))
+  where
+    len = songLength song
+    place channel sq =
+      let spans = [(toRational (clipStart c), toRational (clipEnd c)) | c <- songPlaylist song, clipSequence c == seqId sq]
+          arranged k t =
+            let c = compileTrack (channel + k) t
+             in c {cPattern = inClips spans (cPattern c)}
+       in (channel + length (seqTracks sq), (seqId sq, zipWith arranged [0 ..] (seqTracks sq)))
+    inClips spans pat
+      | null spans || len <= 0 = silence
+      | otherwise = UI.timeLoop (pure (toRational len)) (UI.seqP [(from, to, pat) | (from, to) <- spans])
+
+-- | Where each track's notes start and stop over a sequence's first
+-- @cycles@ cycles, for drawing inside a clip.
+sequencePreview :: Int -> [Compiled] -> [[(Double, Double)]]
+sequencePreview cycles comps =
+  [ [(fromRational (wholeStart e), fromRational (wholeStop e)) | e <- eventsIn 0 (fromIntegral cycles) (cPattern c), eventHasOnset e]
+  | c <- comps
+  ]
 
 compileTrack :: Int -> Track -> Compiled
 compileTrack channel t =

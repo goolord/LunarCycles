@@ -8,7 +8,8 @@ import Data.IORef
 import Data.Vector.Storable qualified as V
 import Lunar.Engine (newEngine, setPlaying, shutdownEngine)
 import Lunar.Model (demoSong, songCps)
-import Lunar.UI (lunarApp, newAppEnv)
+import Data.List (find)
+import Lunar.UI (AppEnv (..), lunarApp, newAppEnv, workspaceName)
 import Lunar.UI.Palette (lunarTheme)
 import NanoUI
 import NanoUI.Backend.Sdl (NanoUIFont (..), SdlOptions (..), defaultSdlOptions, runSdlApp)
@@ -16,7 +17,8 @@ import System.Environment (getArgs)
 import Data.Maybe (isJust, fromMaybe)
 import Text.Read (readMaybe)
 
--- | @lunar-cycles [--play] [--screenshot FILE [--after SECONDS]]@. With
+-- | @lunar-cycles [--play] [--view arrange|pattern|code] [--screenshot FILE
+-- [--after SECONDS]]@. @--view@ picks the view the window opens on. With
 -- @--screenshot@ the window saves itself as a PNG once the given time has
 -- passed, then closes.
 main :: IO ()
@@ -29,7 +31,8 @@ main = do
       shotAfter = fromMaybe 1.5 (opt "--after" >>= readMaybe) :: Double
       dimension name fallback = max 360 (fromMaybe fallback (opt name >>= readMaybe))
   bracket (newEngine (songCps demoSong)) shutdownEngine $ \eng -> do
-    env <- newAppEnv eng
+    env0 <- newAppEnv eng
+    let env = maybe env0 (\w -> env0 {envStartView = w}) (opt "--view" >>= \v -> find ((== v) . workspaceName) [minBound .. maxBound])
     when (flag "--play") (setPlaying eng True)
     started <- newIORef Nothing
     taken <- newIORef False

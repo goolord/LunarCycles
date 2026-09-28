@@ -11,6 +11,7 @@ module Lunar.Engine
   , engineCycle
   , enginePlaying
   , setPlaying
+  , seekTo
   , setCps
   , setTracks
   , midiOutputs
@@ -59,6 +60,8 @@ data Transport = Transport
   , tCps :: !Double
   , tAnchorTime :: !Double
   , tAnchorCycle :: !Double
+  , tStart :: !Double
+    -- ^ Where Play starts from, and Stop rewinds to.
   }
 
 -- | Where the transport is at a monotonic time, in cycles.
@@ -104,7 +107,7 @@ newEngine cps = do
   outs <- either (\(_ :: SomeException) -> pure []) (const listOutputs) midiOk
   eng <-
     Engine
-      <$> newIORef (Transport False cps now 0)
+      <$> newIORef (Transport False cps now 0 0)
       <*> newIORef []
       <*> newIORef 0
       <*> newMVar (MidiState outs (defaultOutput outs) Map.empty)
@@ -146,17 +149,27 @@ engineCycle eng = cycleAt <$> readIORef (engTransport eng) <*> getMonotonicTime
 enginePlaying :: Engine -> IO Bool
 enginePlaying eng = tPlaying <$> readIORef (engTransport eng)
 
--- | Start from cycle 0, or stop and rewind.
+-- | Start from the start point, or stop and rewind to it.
 setPlaying :: Engine -> Bool -> IO ()
 setPlaying eng on = do
   now <- getMonotonicTime
   t <- readIORef (engTransport eng)
   when (on /= tPlaying t) $ do
-    writeIORef (engTransport eng) t {tPlaying = on, tAnchorTime = now, tAnchorCycle = 0}
-    writeIORef (engCursor eng) 0
+    writeIORef (engTransport eng) t {tPlaying = on, tAnchorTime = now, tAnchorCycle = tStart t}
+    writeIORef (engCursor eng) (tStart t)
     unless on $ withMVar (engMidi eng) $ \ms -> forM_ (msSelected ms) (allNotesOff . moId)
-    readIORef (engDirt eng) >>= mapM_ (\st -> when on (Tidal.streamSetCycle st 0))
+    readIORef (engDirt eng) >>= mapM_ (\st -> when on (Tidal.streamSetCycle st (toRational (tStart t))))
     pushDirt eng
+
+-- | Move the start point to a cycle, and the transport with it: playback
+-- carries on from there, and Stop comes back to it.
+seekTo :: Engine -> Double -> IO ()
+seekTo eng c = do
+  now <- getMonotonicTime
+  playing <- atomicModifyIORef' (engTransport eng) $ \t ->
+    (t {tAnchorTime = now, tAnchorCycle = c, tStart = c}, tPlaying t)
+  writeIORef (engCursor eng) c
+  when playing $ readIORef (engDirt eng) >>= mapM_ (\st -> Tidal.streamSetCycle st (toRational c))
 
 -- | Change tempo without a jump: the clock is re-anchored where it is now.
 setCps :: Engine -> Double -> IO ()

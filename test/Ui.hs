@@ -10,18 +10,20 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
-import Lunar.Codegen (songCodeText)
-import Lunar.Engine (newEngine, shutdownEngine, enginePlaying)
+import Lunar.Codegen (codeText, songCode)
+import Lunar.Engine (engineCycle, newEngine, shutdownEngine, enginePlaying)
 import Lunar.Model
-import Lunar.UI (lunarView, newAppEnv)
+import Lunar.UI (AppEnv (..), Workspace (..), lunarView, newAppEnv, workspaceName)
 import Lunar.UI.Editors (euclidEditor)
 import Lunar.UI.Control (selectField)
 import Lunar.UI.Palette (lunarTheme)
+import Lunar.UI.Playlist (laneCount)
 import GHC.Clock (getMonotonicTime)
 import NanoUI
 import NanoUI.Testing
 import NanoUI.Testing.Assert (withInput)
 import NanoUI.Testing.Harness
+import NanoUI.Shortcut (ctrl, key, shift)
 import Lunar.UI.Layout (loadLayout)
 import Lunar.UI.Layout qualified
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
@@ -39,7 +41,7 @@ shape = \case
   Pane i -> P (fromIntegral i)
 
 forgetSaved :: IO ()
-forgetSaved = Lunar.UI.Layout.forgetLayout
+forgetSaved = mapM_ (Lunar.UI.Layout.forgetLayout . workspaceName) [minBound .. maxBound :: Workspace]
 
 main :: IO ()
 main = do
@@ -88,7 +90,8 @@ main = do
         let midway = V2 ((v2X from + v2X to) / 2) ((v2Y from + v2Y to) / 2)
          in [pressAt base from, holdAt base midway, holdAt base to, holdAt base to, releaseAt (holdAt base to)]
       drag from to = mapM_ frame (dragFrames from to) >> idle
-      track name = find ((== name) . trackName) . songTracks <$> readIORef songRef
+      grooveTracks = concatMap seqTracks . take 1 . songSequences
+      track name = find ((== name) . trackName) . grooveTracks <$> readIORef songRef
       gainOf = maybe 1 (psBase . Map.findWithDefault (defaultSetting Gain) Gain . trackParams)
   idle
 
@@ -102,7 +105,7 @@ main = do
       idle
       selected <- collectTextSpans ctx
       check "track padding selects the snare" $
-        any (\(rect, txt, _, _, _) -> txt == "snare" && rectX rect > 450 && rectY rect > 480) selected
+        any (\(rect, txt, _, _, _) -> txt == "snare" && rectX rect > 450 && rectY rect > 420) selected
     Nothing -> check "found snare track row" False
   _ <- click "kick"
   _ <- click "M"
@@ -165,7 +168,7 @@ main = do
       hats <- track "hats"
       check ("drag reorders the chain: " <> T.pack (show (fmap trackChain hats))) $
         fmap (map snd . trackChain) hats == Just [Every 3 Rev, Degrade 0.25]
-      code <- songCodeText <$> readIORef songRef
+      code <- codeText . songCode PlaySequence 1 <$> readIORef songRef
       check "code follows the new order" ("d3 $ every 3 rev\n   $ degradeBy 0.25" `T.isInfixOf` code)
     _ -> check "found the hats' function blocks" False
 
@@ -202,33 +205,35 @@ main = do
       Just (Mini txt) -> "hh" `T.isInfixOf` txt
       _ -> False
 
-  -- Dragging the Code pane by its title onto the Tracks pane swaps them.
-  codeTitle <- spanOf "Code"
+  -- The window opens on the Pattern view. Dragging the Timeline pane by its
+  -- title onto the Tracks pane swaps them.
+  timelineTitle <- spanOf "Timeline"
   tracksTitle <- spanOf "Tracks"
-  case (codeTitle, tracksTitle) of
-    (Just rc, Just rt) -> do
+  case (timelineTitle, tracksTitle) of
+    (Just rl, Just rt) -> do
       let target = V2 (rectX rt + 180) ((rectY rt + 950) / 2)
-      drag (spanCenter rc) target
-      codeAfter <- spanOf "Code"
+      drag (spanCenter rl) target
+      timelineAfter <- spanOf "Timeline"
       tracksAfter <- spanOf "Tracks"
-      check ("panes swapped: " <> T.pack (show (rc, rt, codeAfter, tracksAfter))) $
-        case (codeAfter, tracksAfter) of
-          (Just c', Just t') -> abs (rectX c' - rectX rt) < 40 && abs (rectX t' - rectX rc) < 40
+      check ("panes swapped: " <> T.pack (show (rl, rt, timelineAfter, tracksAfter))) $
+        case (timelineAfter, tracksAfter) of
+          (Just l', Just t') -> abs (rectX l' - rectX rt) < 40 && abs (rectX t' - rectX rl) < 40
           _ -> False
     _ -> check "found the pane titles" False
 
-  -- The swapped arrangement was saved, and a new window opens with it.
-  saved <- loadLayout
-  check ("saved layout has Code where Tracks was: " <> T.pack (show saved)) $
-    fmap shape saved == Just (V (H (P 1) (P 5)) (H (P 2) (V (P 4) (P 3))))
+  -- The swapped arrangement was saved for the Pattern view, and a new
+  -- window opens with it.
+  saved <- loadLayout "pattern"
+  check ("saved layout has the Timeline where the Tracks were: " <> T.pack (show saved)) $
+    fmap shape saved == Just (V (H (P 1) (P 2)) (H (P 3) (P 4)))
   env2 <- newAppEnv eng
   ctx2 <- newContext
   let frame2 inp = void (runFrame ctx2 inp (lunarView env2))
   mapM_ frame2 [base, base, base]
   spans2 <- collectTextSpans ctx2
   let titleX t = (\(Rect x _ _ _, _, _, _, _) -> x) <$> find (\(_, txt, _, _, _) -> txt == t) spans2
-  check ("reopened with the saved layout: " <> T.pack (show (titleX "Code", titleX "Tracks"))) $
-    maybe False (< 100) (titleX "Code") && maybe False (> 1000) (titleX "Tracks")
+  check ("reopened with the saved layout: " <> T.pack (show (titleX "Timeline", titleX "Tracks"))) $
+    maybe False (< 100) (titleX "Timeline") && maybe False (> 400) (titleX "Tracks")
 
   -- A narrow window focuses one instrument without overwriting the dock layout.
   let narrow = withInput 440 820
@@ -250,13 +255,14 @@ main = do
   narrowClick "Cycle"
   narrowSpans2 <- collectTextSpans ctx2
   check "compact cycle view renders the score" (hasText "One revolution, one cycle" narrowSpans2)
-  savedNarrow <- loadLayout
+  savedNarrow <- loadLayout "pattern"
   check "compact navigation preserves the saved desktop layout" (savedNarrow == saved)
   mapM_ frame2 [base, base, base]
   restored <- collectTextSpans ctx2
-  check "resizing back restores all five instruments" (all (`hasText` restored) ["Cycle", "Timeline", "Tracks", "Editor", "Code"])
+  check "resizing back restores the Pattern view's four panes" $
+    all (`hasText` restored) ["One revolution, one cycle", "Timeline", "+ Track", "Rhythm"] && not (any (`hasText` restored) ["+ Sequence", "Copy"])
 
-  -- Reset layout puts the panes back, and the old arrangement stays gone.
+  -- Reset layout puts the view's panes back, and the old arrangement stays gone.
   resetSpans <- collectTextSpans ctx2
   case spanRectOf "Reset layout" resetSpans of
     Just r -> do
@@ -264,18 +270,24 @@ main = do
       mapM_ frame2 [p, rel, base, base, base]
       afterReset <- collectTextSpans ctx2
       let titleAt t = listToMaybe (spanXOf t afterReset)
-      savedReset <- loadLayout
-      check ("Reset layout restores the default panes: " <> T.pack (show (titleAt "Tracks", titleAt "Code"))) $
-        maybe False (< 100) (titleAt "Tracks") && maybe False (> 1000) (titleAt "Code")
+      savedReset <- loadLayout "pattern"
+      check ("Reset layout restores the default panes: " <> T.pack (show (titleAt "Tracks", titleAt "Timeline"))) $
+        maybe False (< 100) (titleAt "Tracks") && maybe False (> 400) (titleAt "Timeline")
       check ("Reset layout saves the default arrangement: " <> T.pack (show savedReset)) $
-        fmap shape savedReset `elem` [Nothing, Just (V (H (P 1) (P 3)) (H (P 2) (V (P 4) (P 5))))]
+        fmap shape savedReset `elem` [Nothing, Just (V (H (P 1) (P 3)) (H (P 2) (P 4)))]
     Nothing -> check "found Reset layout" False
+
+  -- A saved arrangement that does not hold a view's panes is set aside.
+  Lunar.UI.Layout.saveLayout "arrange" (Split 10 AxisV 0.5 (Pane 1) (Pane 2))
+  envStale <- newAppEnv eng
+  check "a stale arrangement is not used" (Map.notMember WsArrange (envLayouts envStale))
+  Lunar.UI.Layout.forgetLayout "arrange"
 
   -- In a cramped arrangement every pane is drawn inside the rect the grid
   -- gave it, so each title still picks its pane up.
-  let cramped = Split 10 AxisV 0.717 (Split 11 AxisH 0.4 (Split 12 AxisV 0.212 (Pane 2) (Pane 1)) (Split 13 AxisH 0.764 (Pane 4) (Pane 3))) (Pane 5)
+  let cramped = Split 10 AxisV 0.717 (Split 11 AxisH 0.4 (Split 12 AxisV 0.212 (Pane 2) (Pane 1)) (Pane 4)) (Pane 3)
   mapM_ (\(title, target) -> do
-      Lunar.UI.Layout.saveLayout cramped
+      Lunar.UI.Layout.saveLayout "pattern" cramped
       env3 <- newAppEnv eng
       ctx3 <- newContext
       let frame3 inp = void (runFrame ctx3 inp (void (lunarView env3)))
@@ -284,10 +296,28 @@ main = do
       case spanRectOf title ss of
         Just r -> do
           mapM_ frame3 (dragFrames (spanCenter r) target <> [base, base])
-          moved <- loadLayout
+          moved <- loadLayout "pattern"
           check ("dragging " <> title <> " in a cramped layout moves it: " <> T.pack (show moved)) (moved /= Just cramped)
         Nothing -> check ("found " <> title <> " in a cramped layout") False)
     [("Tracks", V2 1000 200), ("Editor", V2 1000 200), ("Cycle", V2 1350 500), ("Timeline", V2 1350 500)]
+  mapM_ (Lunar.UI.Layout.forgetLayout . workspaceName) [minBound .. maxBound]
+
+  -- Ctrl+1, 2 and 3 switch between the views, each with its own panes.
+  -- Each pane is known by a control only it has, since the view tabs and
+  -- drawings share some of the pane titles' words.
+  let viewTitles = do
+        ss <- collectTextSpans ctx
+        pure
+          [ title :: Text
+          | (title, mark) <- [("Playlist", "+ Sequence"), ("Cycle", "One revolution, one cycle"), ("Timeline", "Timeline"), ("Tracks", "+ Track"), ("Editor", "Rhythm"), ("Code", "Copy")]
+          , hasText mark ss
+          ]
+  mapM_ frame [chordInp (ctrl <> key '3') base, base, base]
+  check "Ctrl+3 opens the Code view" . (== ["Tracks", "Editor", "Code"]) =<< viewTitles
+  mapM_ frame [chordInp (ctrl <> key '1') base, base, base]
+  check "Ctrl+1 opens the Arrange view" . (== ["Playlist", "Timeline", "Tracks"]) =<< viewTitles
+  mapM_ frame [chordInp (ctrl <> key '2') base, base, base]
+  check "Ctrl+2 returns to the Pattern view" . (== ["Cycle", "Timeline", "Tracks", "Editor"]) =<< viewTitles
 
   play <- spanOf "▶ Play"
   case play of
@@ -312,7 +342,15 @@ main = do
       mapM_ frame [p, rel]
       idle
       outputSpans <- collectOverlayTextSpans ctx base
-      check "Output opens its controls" (all (`hasText` outputSpans) ["MIDI output", "Rescan", "SuperDirt", "Export .mid"])
+      check "Output opens its controls" (all (`hasText` outputSpans) ["MIDI output", "Rescan", "SuperDirt"])
+      -- What Rescan reports goes in the status bar, on the line it already has.
+      clickOverlay "Rescan"
+      statusSpans <- collectTextSpans ctx
+      let rowOf t = (\(sr, _, _, _, _) -> rectY sr) <$> find (\(_, txt, _, _, _) -> t txt) statusSpans
+      check ("the MIDI report sits in the status bar: " <> T.pack (show (rowOf ("MIDI outputs" `T.isSuffixOf`), rowOf (== "Stopped")))) $
+        case (rowOf ("MIDI outputs" `T.isSuffixOf`), rowOf (== "Stopped")) of
+          (Just y1, Just y2) -> abs (y1 - y2) < 2
+          _ -> False
       mapM_ frame [keyInp KeyEscape base, base, base]
       closedSpans <- collectOverlayTextSpans ctx base
       check "Escape closes Output" (not (hasText "MIDI output" closedSpans))
@@ -359,6 +397,119 @@ main = do
   check "long select labels are cut short" $ any (\(_, txt, _, _, _) -> "..." `T.isSuffixOf` txt) selectSpans
   check "select label stays inside the select" $
     all (\(Rect x _ w _, txt, _, _, _) -> txt == "Rescan" || x + w <= 190) selectSpans
+
+  -- The playlist, in a fresh window with the default panes.
+  forgetSaved
+  envP <- newAppEnv eng
+  ctxP <- newContext
+  songP <- newIORef demoSong
+  let frameP inp = void (runFrame ctxP inp (lunarView envP >>= liftIO . writeIORef songP))
+      idleP = mapM_ frameP [base, base, base]
+      playlistOf = songPlaylist <$> readIORef songP
+      clipOf cid = find ((== cid) . clipId) <$> playlistOf
+      clickAtP pos = let (p, rel) = clickPair base pos in mapM_ frameP [p, rel] >> idleP
+      chord c = mapM_ frameP [chordInp c base, base, base]
+  idleP
+  chord (ctrl <> key '1')
+  -- Panes keep the rects their splits give them whatever they hold: the
+  -- song's longer code does not push the dividers.
+  let paneTops = do
+        ss <- collectTextSpans ctxP
+        pure [(t, rectY r) | t <- ["Playlist", "+ Track", "Timeline"], Just r <- [spanRectOf t ss]]
+      clickTextP t = collectTextSpans ctxP >>= \ss -> case spanRectOf t ss of
+        Just r -> clickAtP (spanCenter r)
+        Nothing -> check ("found " <> t) False
+  topsBefore <- paneTops
+  clickTextP "Song"
+  topsSong <- paneTops
+  check ("the song's code leaves the panes where they were: " <> T.pack (show (topsBefore, topsSong))) (length topsBefore == 3 && topsSong == topsBefore)
+  clickTextP "Sequence"
+  titleP <- spanRectOf "Playlist" <$> collectTextSpans ctxP
+  -- The grid is the widget under a point right of the sequence list.
+  gridP <- case titleP of
+    Just (Rect tx ty _ _) -> do
+      frameP base {inputMousePos = V2 (tx + 320) (ty + 90)}
+      getPrevRect ctxP =<< getHotId ctxP
+    Nothing -> pure Nothing
+  case gridP of
+    Just (Rect gx gy gw gh) | gw > 400 -> do
+      -- Lanes share the grid's height, so where a lane is depends on how
+      -- many there are.
+      let atIn lanes c l = V2 (gx + gw * c / 32) (gy + 22 + (gh - 24) / fromIntegral lanes * (l + 0.5))
+          atLive c l = (\n -> atIn (n :: Int) c l) . laneCount gh <$> playlistOf
+      -- A click on an empty lane places the sequence being edited.
+      clickAtP =<< atLive 26.5 2
+      fresh <- find ((== 2) . clipLane) <$> playlistOf
+      check ("a click places groove at cycle 26: " <> T.pack (show fresh)) $
+        fmap (\c -> (clipSequence c, clipStart c, clipCycles c)) fresh == Just (1, 26, 4)
+      -- Dragging a clip moves it along and across lanes.
+      from <- atLive 27.5 2
+      to <- atLive 29.5 3
+      mapM_ frameP (dragFrames from to) >> idleP
+      moved <- playlistOf
+      check ("a clip drags to cycle 28 on the next lane: " <> T.pack (show moved)) $
+        any (\c -> clipLane c == 3 && clipStart c == 28) moved && not (any ((== 2) . clipLane) moved)
+      -- A right-click removes it.
+      (rp, rrel) <- rightClickPair base <$> atLive 29.5 3
+      mapM_ frameP [rp, rrel] >> idleP
+      check "right-click removes the clip" . (== songPlaylist demoSong) =<< playlistOf
+      -- The intro stretches from its right edge.
+      edgeFrom <- atLive 0 0
+      edgeTo <- atLive 6 0
+      mapM_ frameP (dragFrames (V2 (gx + gw * 4 / 32 - 3) (v2Y edgeFrom)) edgeTo) >> idleP
+      check "dragging a clip's right edge stretches it" . (== Just 6) . fmap clipCycles =<< clipOf 1
+      chord (ctrl <> key 'z')
+      check "Ctrl+Z undoes the stretch" . (== Just 4) . fmap clipCycles =<< clipOf 1
+      chord (ctrl <> shift <> key 'z')
+      check "Ctrl+Shift+Z redoes it" . (== Just 6) . fmap clipCycles =<< clipOf 1
+      -- Each gesture undoes on its own: the stretch, the removal, the move
+      -- and the placement.
+      mapM_ (const (chord (ctrl <> key 'z'))) [1 .. 3 :: Int]
+      check "undo steps back one gesture at a time" . any ((== 2) . clipLane) =<< playlistOf
+      chord (ctrl <> key 'z')
+      check "undo returns to the demo playlist" . (== songPlaylist demoSong) =<< playlistOf
+      -- Clicking a clip opens its sequence.
+      clickAtP =<< atLive 1 0
+      introSpans <- collectTextSpans ctxP
+      check "clicking the intro clip edits the intro" (hasText "hats" introSpans && not (hasText "kick" introSpans))
+      -- A double-click opens its sequence in the Pattern view; Ctrl+1 comes back.
+      introAt <- atLive 1 0
+      let (dp, drel) = clickPair base introAt
+      mapM_ frameP [dp, drel, dp, drel] >> idleP
+      patternSpans <- collectTextSpans ctxP
+      check "double-clicking a clip opens the Pattern view" (hasText "Rhythm" patternSpans && not (hasText "+ Sequence" patternSpans))
+      chord (ctrl <> key '1')
+      -- The ruler moves the playhead, and plays the song from there.
+      clickAtP (V2 (gx + gw * 12.4 / 32) (gy + 10))
+      cycleNow <- engineCycle eng
+      check ("the ruler moves the playhead to cycle 12: " <> T.pack (show cycleNow)) (abs (cycleNow - 12) < 1e-9)
+      songSpans <- collectTextSpans ctxP
+      check "the ruler switches the transport to the song" (hasText "Song, 24 cycles" songSpans)
+      case spanRectOf "Sequence" songSpans of
+        Just r -> clickAtP (spanCenter r)
+        Nothing -> check "found the Sequence switch" False
+      sequenceSpans <- collectTextSpans ctxP
+      check "the Sequence switch plays the edited sequence again" (hasText "Looping intro" sequenceSpans && not (hasText "Song, 24 cycles" sequenceSpans))
+      check "switching the transport rewinds it" . (== 0) =<< engineCycle eng
+      -- New asks before throwing away changes.
+      clickAtP =<< atLive 30.5 1
+      projectSpans <- collectTextSpans ctxP
+      case spanRectOf "Project  ▾" projectSpans of
+        Just r -> do
+          clickAtP (spanCenter r)
+          menu <- collectOverlayTextSpans ctxP base
+          case (\(r', _, _, _, _) -> r') <$> find (\(_, txt, _, _, _) -> "New" `T.isPrefixOf` txt) menu of
+            Just rn -> clickAtP (spanCenter rn)
+            Nothing -> check "the Project menu lists New" False
+          confirm <- collectOverlayTextSpans ctxP base
+          check "New asks before discarding changes" (hasText "Discard" confirm)
+          check "the song is kept until New is confirmed" . (/= blankSong) =<< readIORef songP
+          case spanRectOf "Discard" confirm of
+            Just rd -> clickAtP (spanCenter rd)
+            Nothing -> pure ()
+          check "confirming New starts a blank song" . (== blankSong) =<< readIORef songP
+        Nothing -> check "found the Project menu" False
+    other -> check ("found the playlist grid: " <> T.pack (show other)) False
 
   n <- readIORef failures
   shutdownEngine eng

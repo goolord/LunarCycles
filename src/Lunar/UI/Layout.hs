@@ -1,5 +1,5 @@
--- | Keeping the pane arrangement between runs: the pane grid's split tree,
--- written as it shows itself.
+-- | Keeping each view's pane arrangement between runs: the pane grid's
+-- split tree, written as it shows itself, one file per view.
 module Lunar.UI.Layout
   ( loadLayout
   , saveLayout
@@ -18,25 +18,26 @@ import System.Directory
 import System.FilePath ((</>))
 import Text.Read (readMaybe)
 
-layoutFile :: IO FilePath
-layoutFile = (</> "layout") <$> getXdgDirectory XdgConfig "lunar-cycles"
+-- | Where the arrangement of the named view is kept.
+layoutFile :: String -> IO FilePath
+layoutFile view = (</> ("layout-" <> view)) <$> getXdgDirectory XdgConfig "lunar-cycles"
 
 -- | The arrangement saved last time, if there is a readable one.
-loadLayout :: IO (Maybe GridNode)
-loadLayout = do
-  r <- try @SomeException (readFile' =<< layoutFile)
+loadLayout :: String -> IO (Maybe GridNode)
+loadLayout view = do
+  r <- try @SomeException (readFile' =<< layoutFile view)
   pure (either (const Nothing) readMaybe r)
   where
     readFile' path = do
       s <- readFile path
       length s `seq` pure s
 
-saveLayout :: GridNode -> IO ()
-saveLayout layout = void . try @SomeException $ do
-  path <- layoutFile
+saveLayout :: String -> GridNode -> IO ()
+saveLayout view layout = void . try @SomeException $ do
+  path <- layoutFile view
   dir <- getXdgDirectory XdgConfig "lunar-cycles"
   createDirectoryIfMissing True dir
   writeFile path (show layout <> "\n")
 
-forgetLayout :: IO ()
-forgetLayout = void . try @SomeException $ removeFile =<< layoutFile
+forgetLayout :: String -> IO ()
+forgetLayout view = void . try @SomeException $ removeFile =<< layoutFile view
