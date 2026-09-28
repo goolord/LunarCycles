@@ -90,7 +90,7 @@ main = do
         let midway = V2 ((v2X from + v2X to) / 2) ((v2Y from + v2Y to) / 2)
          in [pressAt base from, holdAt base midway, holdAt base to, holdAt base to, releaseAt (holdAt base to)]
       drag from to = mapM_ frame (dragFrames from to) >> idle
-      grooveTracks = concatMap seqTracks . take 1 . songSequences
+      grooveTracks song = concatMap (sequenceTracks song) (take 1 (songSequences song))
       track name = find ((== name) . trackName) . grooveTracks <$> readIORef songRef
       gainOf = maybe 1 (psBase . Map.findWithDefault (defaultSetting Gain) Gain . trackParams)
   idle
@@ -250,7 +250,7 @@ main = do
   narrowClick "Tracks"
   narrowClick "+ Track"
   narrowSpans <- collectTextSpans ctx2
-  check "adding a track in compact view opens its editor" (hasText "track 5" narrowSpans && hasText "Rhythm" narrowSpans)
+  check "adding a track in compact view opens its editor" (hasText "track 6" narrowSpans && hasText "Rhythm" narrowSpans)
   narrowClick "✕"
   narrowClick "Cycle"
   narrowSpans2 <- collectTextSpans ctx2
@@ -471,7 +471,7 @@ main = do
       -- Clicking a clip opens its sequence.
       clickAtP =<< atLive 1 0
       introSpans <- collectTextSpans ctxP
-      check "clicking the intro clip edits the intro" (hasText "hats" introSpans && not (hasText "kick" introSpans))
+      check "clicking the intro clip edits the intro" (hasText "Looping intro" introSpans && hasText "2 of 5 tracks in intro" introSpans)
       -- A double-click opens its sequence in the Pattern view; Ctrl+1 comes back.
       introAt <- atLive 1 0
       let (dp, drel) = clickPair base introAt

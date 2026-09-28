@@ -16,6 +16,7 @@ module Lunar.UI
 import Control.Applicative ((<|>))
 import Control.Exception (SomeException, try)
 import Control.Monad
+import Data.Char (isAlphaNum)
 import Data.IORef
 import Data.List (elemIndex, find, findIndex, sort)
 import Data.Map.Strict qualified as Map
@@ -96,13 +97,18 @@ derive env song mode current = do
     Just (memoKey, d) | memoKey == (song, mode, current) -> pure d
     _ -> do
       let arranged = arrangeSong song
-          own = maybe [] compileSequence (findSequence current song)
+          own = maybe [] (compileSequence song) (findSequence current song)
           (compiled, sounding) = case mode of
             PlaySequence -> (own, audible own)
-            PlaySong -> (fromMaybe [] (lookup current arranged), concatMap (audible . snd) arranged)
+            PlaySong -> (fromMaybe [] (lookup current arranged), audible (byChannel (map snd arranged)))
           code = songCode mode current song
           previewCycles sq = maximum (seqCycles sq : [clipCycles c | c <- songPlaylist song, clipSequence c == seqId sq])
-          previews = Map.fromList [(seqId sq, sequencePreview (previewCycles sq) (compileSequence sq)) | sq <- songSequences song]
+          preview sq =
+            [ (i, evs)
+            | (i, t, evs) <- zip3 [0 ..] (sequenceTracks song sq) (sequencePreview (previewCycles sq) (compileSequence song sq))
+            , partsIn sq (trackId t)
+            ]
+          previews = Map.fromList [(seqId sq, preview sq) | sq <- songSequences song]
           d = Derived compiled sounding code (codeText code) previews
       when (fmap (\((s, _, _), _) -> songCps s) memo /= Just (songCps song)) $ setCps (envEngine env) (songCps song)
       setTracks (envEngine env) sounding
@@ -225,7 +231,7 @@ lunarView env = styled (const lunarTheme) $ do
         fromMaybe (newSequence 0 "sequence") $
           (currentPick >>= \i -> find ((== i) . seqId) sequences) <|> listToMaybe sequences
       current = seqId currentSeq
-      editSeq f = edit (mapSequence current f)
+      editTrack tid f = edit (mapTrack current tid f)
       pickSequence sid = when (Just sid /= currentPick) (setCurrent (Just sid))
   derived <- liftIO (derive env song mode current)
   wasPlaying <- liftIO (enginePlaying eng)
@@ -249,7 +255,7 @@ lunarView env = styled (const lunarTheme) $ do
       showWorkspace w = when (w /= workspace) (setWorkspace w)
   forM_ (zip ['1' ..] [minBound .. maxBound]) $ \(k, w) -> whenM (shortcut (ctrl <> key k)) (showWorkspace w)
   let compiled = dCompiled derived
-      tracks = seqTracks currentSeq
+      tracks = sequenceTracks song currentSeq
       selected = case selectedId of
         Just i | any ((== i) . trackId) tracks -> Just i
         _ -> trackId <$> listToMaybe tracks
@@ -419,21 +425,27 @@ lunarView env = styled (const lunarTheme) $ do
                   let at = fromMaybe 0 (findIndex ((== current) . seqId) sequences)
                   i <- selectField 150 (map seqName sequences) at
                   when (i /= at) (pickSequence (seqId (sequences !! i)))
-                  whenM (buttonWith (fontSize 13 . alignMid . minH 36) "+ Track") $ do
-                    let tid = nextTrackId currentSeq
-                    editSeq (\sq -> sq {seqTracks = seqTracks sq <> [newTrack tid ("track " <> tshow tid) "cp" (Steps (replicate 8 Nothing))]})
+                  addResp <- buttonWith' (fontSize 13 . alignMid . minH 36) "+ Track"
+                  tooltip addResp "Add a channel to every sequence, with a part in this one"
+                  when (respClicked addResp) $ do
+                    let tid = nextChannelId song
+                    edit (addChannel current (newChannel tid ("track " <> tshow tid) "cp") (Part (Steps (replicate 8 Nothing)) []))
                     selectTrack tid
               )
-              $ trackList th (rectW (pgcRect pctx)) selected selectTrack silenced editSeq compiled
+              $ trackList th (rectW (pgcRect pctx)) selected selectTrack silenced (partsIn currentSeq) editTrack compiled
           PaneEditor ->
             frame pctx (paneTitle kind) Nothing $
               case [(i, c) | (i, c) <- zip [0 ..] compiled, Just (trackId (cTrack c)) == selected] of
                 (i, c) : _ -> do
                   let tid = trackId (cTrack c)
                       duplicate = do
-                        editSeq (fst . duplicateTrack tid)
-                        selectTrack (nextTrackId currentSeq)
-                  trackEditor th i now editorTab setEditorTab (silenced (cTrack c)) editSeq duplicate c
+                        edit (fst . duplicateTrack current tid)
+                        selectTrack (nextChannelId song)
+                      remove = edit (removeChannel tid)
+                      placement
+                        | partsIn currentSeq tid = Nothing
+                        | otherwise = Just ("Silent in " <> seqName currentSeq <> ". Give it a rhythm to add it here.")
+                  trackEditor th i now editorTab setEditorTab (silenced (cTrack c)) placement (editTrack tid) duplicate remove c
                 [] -> muted ("Add a track to " <> seqName currentSeq <> " to edit it here.")
           PaneCode ->
             frame
@@ -502,7 +514,7 @@ lunarView env = styled (const lunarTheme) $ do
       labelWith (fontMuted . fontSize 12) $ case mode of
         PlaySequence -> "Looping " <> seqName currentSeq
         PlaySong -> "Song, " <> tshow len <> (if len == 1 then " cycle" else " cycles")
-      labelWith (fontMuted . fontSize 12) (tshow (length tracks) <> " tracks in " <> seqName currentSeq)
+      labelWith (fontMuted . fontSize 12) (tshow (length (seqParts currentSeq)) <> " of " <> tshow (length tracks) <> " tracks in " <> seqName currentSeq)
       -- What the last command or the engine had to say, on one line.
       msg <- liftIO (engineMessage eng)
       let note = T.intercalate ". " (filter (not . T.null) [status, msg])
@@ -759,10 +771,11 @@ toolbarView env tb = do
           pure (respClicked resetResp)
     pure reset
 
--- | Every track on one line: its colour, name and pattern, and mute and
--- solo. Clicking a line opens the track in the editor.
-trackList :: Theme -> Float -> Maybe Int -> (Int -> NanoUI ()) -> (Track -> Bool) -> ((Sequence -> Sequence) -> NanoUI ()) -> [Compiled] -> NanoUI ()
-trackList th paneWidth selected selectTrack silenced editSeq compiled =
+-- | Every channel on one line: its colour, name and pattern in the edited
+-- sequence, and mute and solo. Clicking a line opens the track in the
+-- editor. A channel without a part in the sequence shows a dash.
+trackList :: Theme -> Float -> Maybe Int -> (Int -> NanoUI ()) -> (Track -> Bool) -> (Int -> Bool) -> (Int -> (Track -> Track) -> NanoUI ()) -> [Compiled] -> NanoUI ()
+trackList th paneWidth selected selectTrack silenced placed editTrack compiled =
   scrollWith (fillW . fillH) $
     columnWith (padRight 4 . tight . gap 6 . fillW) $ do
       when (null compiled) $ hint "No tracks yet. Choose + Track to add a rhythm."
@@ -771,7 +784,7 @@ trackList th paneWidth selected selectTrack silenced editSeq compiled =
             tid = trackId t
             col = trackColor th i
             isSel = selected == Just tid
-            update f = editSeq (mapTrack tid f)
+            update = editTrack tid
             surface =
               if isSel
                 then panelStyle (background (lerpColor (themeWindow th) col 0.14) . borderWidth 1 . borderColor (withAlpha col 0.75) . cornerRadius 6)
@@ -796,18 +809,18 @@ trackList th paneWidth selected selectTrack silenced editSeq compiled =
                 (soloResp, solo') <- toggle Accent "S" (trackSolo t)
                 tooltip soloResp (if trackSolo t then "Stop soloing" else "Solo")
                 when (solo' /= trackSolo t) $ update (\tr -> tr {trackSolo = solo'})
-                void $ richTextWith (fillW . padLeft 4 . fontMono . fontSize 12 . alignMid . fontColor (if silenced t then themeMuted th else styleFg (themePanel th))) [inlineText (sourceMini t)]
+                void $ richTextWith (fillW . padLeft 4 . fontMono . fontSize 12 . alignMid . fontColor (if silenced t then themeMuted th else styleFg (themePanel th))) [inlineText (if placed tid then sourceMini t else "—")]
         when (respClicked area) (selectTrack tid)
 
--- | The selected track: its name at the top, then tabs for its rhythm, the
--- functions it passes through, and its sound.
-trackEditor :: Theme -> Int -> Double -> EditorTab -> (EditorTab -> NanoUI ()) -> Bool -> ((Sequence -> Sequence) -> NanoUI ()) -> NanoUI () -> Compiled -> NanoUI ()
-trackEditor th index now editorTab setEditorTab silenced editSeq duplicate c = do
+-- | The selected track: its name at the top, then tabs for its rhythm and
+-- the functions it passes through in the edited sequence, and its sound,
+-- which the channel has in every sequence. @placement@ says why the track
+-- is silent here when the sequence gives it no part.
+trackEditor :: Theme -> Int -> Double -> EditorTab -> (EditorTab -> NanoUI ()) -> Bool -> Maybe Text -> ((Track -> Track) -> NanoUI ()) -> NanoUI () -> NanoUI () -> Compiled -> NanoUI ()
+trackEditor th index now editorTab setEditorTab silenced placement update duplicate remove c = do
   let t = cTrack c
-      tid = trackId t
       col = trackColor th index
       pitched = isPitched (trackSound t)
-      update f = editSeq (mapTrack tid f)
       beat = now - fromIntegral (floor now :: Int)
   (note, setNote) <- useText ""
   columnWith (tight . gap 8 . fillW . fillH) $ do
@@ -817,11 +830,11 @@ trackEditor th index now editorTab setEditorTab silenced editSeq duplicate c = d
       when (name' /= trackName t) $ update (\tr -> tr {trackName = name'})
       flex
       duplicateResp <- styled subtle (buttonWith' (fixedWH 36 36 . alignMid) "⧉")
-      tooltip duplicateResp "Duplicate track"
+      tooltip duplicateResp "Duplicate as a new channel, with this sequence's part"
       when (respClicked duplicateResp) duplicate
       removeResp <- styled subtle (buttonWith' (fixedWH 36 36 . alignMid) "✕")
-      tooltip removeResp "Remove track"
-      when (respClicked removeResp) $ editSeq (\sq -> sq {seqTracks = filter ((/= tid) . trackId) (seqTracks sq)})
+      tooltip removeResp "Remove the channel from every sequence"
+      when (respClicked removeResp) remove
     tab' <-
       tabBarConfigured
         defaultTabsConfig {tabsStyle = TabUnderline}
@@ -847,6 +860,7 @@ trackEditor th index now editorTab setEditorTab silenced editSeq duplicate c = d
             (Steps _, Just rule) -> wrappedText (fontMuted . fontSize 12 . alignMid) ("Simplified: " <> rule)
             _ -> pure ()
         scope $ unless (T.null note) $ wrappedText (fontTone Warning . fontSize 12) note
+        scope $ forM_ placement $ wrappedText (fontMuted . fontSize 12)
         case trackSource t of
           Steps xs -> do
             xs' <- stepGrid col pitched beat xs
@@ -878,12 +892,34 @@ trackEditor th index now editorTab setEditorTab silenced editSeq duplicate c = d
       TabSound -> do
         rowWith (tight . gap 8 . alignMid) $ do
           labelWith (fontMuted . alignMid) "Sound"
-          let options = map soundLabel catalog <> [trackSound t | trackSound t `notElem` catalogNames]
-              idx = fromMaybe (length catalog) (elemIndex (trackSound t) catalogNames)
-          i <- selectField 210 options idx
-          when (i /= idx && i < length catalog) $ update (\tr -> tr {trackSound = soundName (catalog !! i)})
+          sound' <- soundField (trackSound t)
+          forM_ sound' $ \s -> update (\tr -> tr {trackSound = s})
         knobRow col now t update c
-        hint "Drag, scroll or use arrow keys to set a knob. Right-click to reset. Use the signal button to add modulation."
+        hint "The sound and knobs belong to the channel, so every sequence plays them. Type to filter the sounds, or enter any SuperDirt sample name. Drag, scroll or use arrow keys to set a knob. Right-click to reset. Use the signal button to add modulation."
+
+-- | A track's sound as a combo box: the catalog is a filterable list that
+-- scrolls rather than running off the window, and any other sample name can
+-- be typed. Returns the sound to switch to when a pick or typed name commits.
+soundField :: Text -> NanoUI (Maybe Text)
+soundField current = columnWith (fixedW 240 . tight) $ do
+  -- Text typed but not yet committed; the field otherwise shows the track's
+  -- sound, so undo and switching tracks update it.
+  (draft, setDraft) <- useState (Nothing :: Maybe Text)
+  (resp, text) <- comboBox' "Sound" (map soundLabel catalog) (fromMaybe current draft)
+  if respChanged resp
+    then do
+      when (isJust draft) (setDraft Nothing)
+      pure (mfilter (/= current) (parseSound text))
+    else do
+      let draft' = if text == current then Nothing else Just text
+      when (draft' /= draft) (setDraft draft')
+      pure Nothing
+  where
+    parseSound txt = case find ((== txt) . soundLabel) catalog of
+      Just s -> Just (soundName s)
+      Nothing -> case T.words txt of
+        [w] | T.all (\ch -> isAlphaNum ch || ch == '_' || ch == '-') w -> Just w
+        _ -> Nothing
 
 -- | The source as it appears at the end of the code's chain.
 sourceCode :: Track -> Text

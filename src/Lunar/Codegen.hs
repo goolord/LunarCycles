@@ -226,16 +226,20 @@ songCode mode current song = case mode of
   PlaySequence -> sequenceCode song (findSequence current song)
   PlaySong -> arrangementCode current song
 
--- | A sequence as live code: a channel for each track, @d1@ for the first.
+-- | A sequence as live code: a @dN@ for each channel with a part in it,
+-- numbered by the channel's place in the song, so a channel keeps its
+-- number in every sequence.
 sequenceCode :: Song -> Maybe Sequence -> CodeLines
 sequenceCode song msq =
   setcpsLine song
     : concat
       [ (Nothing, []) : map ((,) (Just (trackId t))) (trackCode (silencedIn tracks t) ch t)
-      | (ch, t) <- zip [1 ..] tracks
+      | Just sq <- [msq]
+      , (ch, t) <- zip [1 ..] tracks
+      , partsIn sq (trackId t)
       ]
   where
-    tracks = maybe [] seqTracks msq
+    tracks = maybe [] (sequenceTracks song) msq
 
 -- | The playlist as live code: each placed sequence bound to its name as a
 -- @stack@ of its tracks, and one channel that plays them where the
@@ -278,12 +282,14 @@ arrangementCode current song
         ]
       )
     binding i sq =
-      let tracks = seqTracks sq
+      let everyTrack = sequenceTracks song sq
+          tracks = filter (partsIn sq . trackId) everyTrack
+          silenced = silencedIn everyTrack
           tag t = if seqId sq == current then Just (trackId t) else Nothing
           lead = plain ((if i == 0 then "let " else "    ") <> nameOf (seqId sq) <> " = ")
-          audibleIds = [trackId t | t <- tracks, not (silencedIn tracks t)]
+          audibleIds = [trackId t | t <- tracks, not (silenced t)]
           element t
-            | silencedIn tracks t = [(tag t, plain "      " : comment l) | l <- trackLines t]
+            | silenced t = [(tag t, plain "      " : comment l) | l <- trackLines t]
             | otherwise =
                 let sep = if take 1 audibleIds == [trackId t] then "[ " else ", "
                  in zipWith (\p l -> (tag t, plain p : l)) (("      " <> sep) : repeat "        ") (trackLines t)

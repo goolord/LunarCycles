@@ -20,28 +20,30 @@ The identity comes from the actual pattern data, rather than an illustration.
 
 ## Tokens
 
-A harbour at night. Three depths of grey-blue slate separate the workspace,
-the instrument surfaces and the controls, so a pane never blends into the
-window behind it and a button never blends into its pane. The slate is kept
-low in chroma and leans toward sea rather than violet; colour belongs to the
-tracks and the moon.
+The surface of the moon. Three depths of warm, near-neutral grey (dark mare
+basalt, regolith, and the lighter highlands) separate the workspace, the
+instrument surfaces and the controls, so a pane never blends into the window
+behind it and a button never blends into its pane. The greys carry almost no
+chroma, as in Bitwig Studio, so colour appears only on tracks and on the
+harvest moon.
 
 | Token | Value | Purpose |
 | --- | --- | --- |
-| Water | `#080F15` | Workspace, gutters, recessed wells (timeline, grid, code, inputs) |
-| Hull | `#172430` | Pane surfaces |
-| Cap | `#2B3D50` | Raised controls; hover `#364C62` |
-| Rim | `#7892A9` | Control borders, 4.9:1 against Hull |
-| Moonlight | `#E8EDF1` | Primary text |
-| Mist | `#9FB0BF` | Secondary text, 7.1:1 on Hull |
-| Moon | `#F2D27A` | Transport, playheads, focus, a soloed track |
+| Mare | `#141312` | Workspace, gutters, recessed wells (timeline, grid, code, inputs) |
+| Regolith | `#242321` | Pane surfaces |
+| Highland | `#363431` | Raised controls; hover `#42403C` |
+| Rim | `#76726C` | Control borders, 3.3:1 against Regolith |
+| Moonlight | `#E2DED6` | Primary text |
+| Dust | `#A49F96` | Secondary text, 6.0:1 on Regolith |
+| Harvest | `#ECA34C` | Transport, playheads, focus, a soloed track |
 
-Tracks are sea glass `#7FD1B2`, harbour blue `#82BCEB`, buoy coral `#F0916F`
-and kelp `#BCD072`, each above 6.5:1 on Hull. Sea glass, harbour blue and
-coral also colour strings, functions and numbers in the code. Amber `#FFBE66` lights a muted
-track; `#FF7B7B` is kept for errors. Track colours repeat after four tracks;
-names and channel identifiers also identify them, so colour is never the
-only means of identification.
+Tracks are lichen `#92B276`, tide `#6EA8A0`, blood moon `#CE725C` and straw
+`#CCBA7A`, muted so that a full timeline stays calm and each at least 4.6:1
+on Regolith. Lichen, tide and blood moon also colour strings, functions and
+numbers in the code. Straw also lights a muted track; `#E86056` is kept for
+errors. Track colours repeat after four tracks; names and channel
+identifiers also identify them, so colour is never the only means of
+identification.
 
 Controls follow one rule: at rest a button is a Cap with a Rim; when it
 turns something on (mute, solo, a running modulation) it fills with that
@@ -103,8 +105,18 @@ Playback state / what loops / track count / transport shortcut
 
 ## Sequences and the playlist
 
-A song is a set of sequences, each a group of tracks, and a playlist that
-places them in time, the way a DAW arranges patterns. The track list,
+A song is a set of channels, a set of sequences, and a playlist that
+places the sequences in time, the way a DAW arranges patterns. Channels
+are shared, as in a channel rack: a channel's name, sound, knobs, mute and
+solo are the same in every sequence, so changing the bass's sound in one
+sequence changes it in all of them. Each sequence gives a channel a part,
+its rhythm and functions, or none, and a channel without a part is silent
+there; the track list shows a dash for it, and the editor says so. Editing
+its rhythm adds a part. A channel keeps its `dN` and MIDI channel in every
+sequence. + Track adds a channel with a part in the edited sequence;
+Duplicate copies the channel with only this sequence's part; Remove takes
+the channel out of every sequence. Songs saved before channels were shared
+open with same-named, same-sound tracks merged into one channel. The track list,
 editor, cycle and timeline always show the sequence being edited. The
 transport's Sequence/Song switch picks what plays. Sequence mode loops the
 edited sequence as `d1`…`dN`, as before. Song mode plays the playlist, and
@@ -171,9 +183,9 @@ use adaptive path tessellation rather than visibly polygonal primitives.
   desktop window without runtime errors.
 - PASS, visual review: rendered at 1600 × 980, 440 × 820, and 400 × 600 logical
   pixels. The minimum-size editor scrolls vertically, with all view tabs visible.
-- PASS, text contrast checks: primary text on the pane surface is 13.4:1;
-  secondary text is 7.1:1; track colours are at least 6.7:1; control rims
-  are 4.9:1 against the pane (WCAG 1.4.11 asks 3:1).
+- PASS, text contrast checks: primary text on the pane surface is 11.7:1;
+  secondary text is 6.0:1; track colours are at least 4.6:1; control rims
+  are 3.3:1 against the pane (WCAG 1.4.11 asks 3:1).
 - PASS, both Cabal test suites: step painting changes the pattern; keyboard
   input toggles a step; dragging and arrow keys change gain; dragging and menu
   actions reorder functions; adding a function updates the chain; Mini converts

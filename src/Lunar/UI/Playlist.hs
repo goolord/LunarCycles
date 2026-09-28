@@ -22,9 +22,10 @@ import Lunar.UI.Palette (trackColor)
 import Lunar.UI.Timeline (smallFont)
 import NanoUI
 
--- | Where each of a sequence's tracks has notes, from its cycle 0, as
--- onset and end in cycles: one row per track.
-type ClipPreview = [[(Double, Double)]]
+-- | Where each channel with a part in a sequence has notes, from its cycle
+-- 0, as onset and end in cycles: one row per part, with the channel's place
+-- in the song for its colour.
+type ClipPreview = [(Int, [(Double, Double)])]
 
 -- | Where the transport is within the song, and whether it is moving.
 data Playhead = Playhead {phCycle :: !Double, phMoving :: !Bool}
@@ -178,11 +179,11 @@ playlistGrid current sequences preview spanCycles playhead clips = do
             drawRoundedRect cr 4 (if own then lerpColor cap fg 0.12 else cap)
             -- A short clip draws its notes faintly behind its name.
             withClip (rectInflate (-2) cr) $ do
-              forM_ (zip [0 ..] rows) $ \(k, evs) ->
+              forM_ (zip [0 :: Int ..] rows) $ \(k, (colour, evs)) ->
                 forM_ evs $ \(s, e) -> when (s < cycles) $ do
                   let ex = xOf g (fromIntegral (clipStart c) + s)
                       ew = max 1.5 (realToFrac (min e cycles - s) * pxPerCycle - 1)
-                  drawRect (Rect ex (rowsTop + fromIntegral k * rowH) ew (max 1 (rowH - 1))) (withAlpha (trackColor th k) (if labelled then 0.9 else 0.4))
+                  drawRect (Rect ex (rowsTop + fromIntegral k * rowH) ew (max 1 (rowH - 1))) (withAlpha (trackColor th colour) (if labelled then 0.9 else 0.4))
               drawTextWith smallFont (V2 (cx + 6) (cy + (if labelled then 2 else ch / 2 - 7))) AlignStart AlignTop (nameOf (clipSequence c)) fg
             drawStrokeRoundedRect cr 4 (if chosen then 2 else 1) (if chosen then fg else if own then withAlpha fg 0.6 else rim)
         forM_ playhead $ \(Playhead now _) -> when (now >= startD && now <= startD + span') $ do
@@ -271,7 +272,7 @@ sequencePicker current song pick edit = do
               else subtle
       rowWith (tight . gap 4 . fillW . alignMid) $ do
         r <- styled surface (buttonWith' (fillW . fontSize 13 . minH 32 . alignMid) (seqName sq))
-        tooltip r (seqName sq <> ": " <> T.pack (show (length (seqTracks sq))) <> " tracks, " <> placedText uses)
+        tooltip r (seqName sq <> ": " <> T.pack (show (length (seqParts sq))) <> " parts, " <> placedText uses)
         when (respClicked r) (pick sid)
         when chosen $ do
           (open, setOpen) <- useFlag False

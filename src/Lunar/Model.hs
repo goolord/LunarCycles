@@ -1,14 +1,21 @@
--- | The song as the sequencer edits it: sequences of tracks, and a playlist
--- that places the sequences in time. Each track has a rhythm source, a chain
--- of pattern transforms, and parameters that may follow a continuous
--- signal. "Lunar.Compile" turns it into Tidal patterns and "Lunar.Codegen"
+-- | The song as the sequencer edits it: channels, the sequences that give
+-- each channel a part, and a playlist that places the sequences in time. A
+-- channel is an instrument, its sound and parameters (which may follow a
+-- continuous signal), shared by every sequence; its part in a sequence is a
+-- rhythm source and a chain of pattern transforms. "Lunar.Compile" turns it into Tidal patterns and "Lunar.Codegen"
 -- into the Tidal code that builds the same patterns.
 module Lunar.Model
   ( Song (..)
+  , Channel (..)
   , Sequence (..)
+  , Part (..)
+  , emptyPart
   , Clip (..)
   , PlayMode (..)
   , Track (..)
+  , channelTrack
+  , sequenceTracks
+  , partsIn
   , Source (..)
   , SourceMode (..)
   , sourceMode
@@ -29,8 +36,10 @@ module Lunar.Model
   , paramName
   , paramActive
   , defaultSetting
-  , newTrack
-  , nextTrackId
+  , newChannel
+  , nextChannelId
+  , addChannel
+  , removeChannel
   , nextTransformId
   , newSequence
   , nextSequenceId
@@ -58,22 +67,53 @@ import Sound.Tidal.Bjorklund (bjorklund)
 
 data Song = Song
   { songCps :: !Double
+  , songChannels :: ![Channel]
+    -- ^ In the order the track list shows them; the first plays on @d1@.
   , songSequences :: ![Sequence]
     -- ^ Never empty: there is always a sequence to edit.
   , songPlaylist :: ![Clip]
   }
   deriving (Eq, Show, Read)
 
--- | Tracks that play together, such as a groove, a fill or a break. The
+-- | An instrument of the song: what it plays through and how it is heard.
+-- Every sequence has every channel, so changing a channel's sound changes
+-- it wherever the channel plays.
+data Channel = Channel
+  { chanId :: !Int
+  , chanName :: !Text
+  , chanSound :: !Text
+  , chanParams :: !(Map Param ParamSetting)
+  , chanMuted :: !Bool
+  , chanSolo :: !Bool
+  }
+  deriving (Eq, Show, Read)
+
+-- | Parts that play together, such as a groove, a fill or a break. The
 -- editor works on one sequence at a time, and the playlist chains them.
 data Sequence = Sequence
   { seqId :: !Int
   , seqName :: !Text
   , seqCycles :: !Int
     -- ^ How many cycles a clip of the sequence covers when it is placed.
-  , seqTracks :: ![Track]
+  , seqParts :: !(Map Int Part)
+    -- ^ Each channel's part, by channel id. A channel without one is
+    -- silent in the sequence.
   }
   deriving (Eq, Show, Read)
+
+-- | What a channel plays in one sequence.
+data Part = Part
+  { partSource :: !Source
+  , partChain :: ![(Int, Transform)]
+    -- ^ Outermost first, as the code reads: @every 4 (fast 2) $ jux rev $ ...@
+    -- has @every@ at the head. Each transform carries an id that keeps its
+    -- block's widget state while blocks are dragged past each other.
+  }
+  deriving (Eq, Show, Read)
+
+-- | What the editor shows for a channel that has no part in a sequence.
+emptyPart :: Part
+emptyPart = Part (Steps (replicate 16 Nothing)) []
 
 -- | A sequence placed in the playlist, on a lane, for whole cycles. The
 -- sequence plays from its own cycle 0 at the clip's start, as Tidal's
@@ -92,20 +132,44 @@ data Clip = Clip
 data PlayMode = PlaySequence | PlaySong
   deriving (Eq, Show, Enum, Bounded)
 
+-- | A channel as one sequence plays it: the channel's settings with its part
+-- there. It is what the editors, compiler and code work on; 'mapTrack'
+-- writes a changed one back to the channel and the part.
 data Track = Track
   { trackId :: !Int
+    -- ^ The channel's id.
   , trackName :: !Text
   , trackSound :: !Text
   , trackSource :: !Source
   , trackChain :: ![(Int, Transform)]
-    -- ^ Outermost first, as the code reads: @every 4 (fast 2) $ jux rev $ ...@
-    -- has @every@ at the head. Each transform carries an id that keeps its
-    -- block's widget state while blocks are dragged past each other.
   , trackParams :: !(Map Param ParamSetting)
   , trackMuted :: !Bool
   , trackSolo :: !Bool
   }
-  deriving (Eq, Show, Read)
+  deriving (Eq, Show)
+
+channelTrack :: Sequence -> Channel -> Track
+channelTrack sq ch =
+  Track
+    { trackId = chanId ch
+    , trackName = chanName ch
+    , trackSound = chanSound ch
+    , trackSource = partSource part
+    , trackChain = partChain part
+    , trackParams = chanParams ch
+    , trackMuted = chanMuted ch
+    , trackSolo = chanSolo ch
+    }
+  where
+    part = Map.findWithDefault emptyPart (chanId ch) (seqParts sq)
+
+-- | Every channel as the sequence plays it, in channel order.
+sequenceTracks :: Song -> Sequence -> [Track]
+sequenceTracks song sq = map (channelTrack sq) (songChannels song)
+
+-- | Whether the channel has a part in the sequence.
+partsIn :: Sequence -> Int -> Bool
+partsIn sq cid = Map.member cid (seqParts sq)
 
 -- | Where a track's rhythm comes from. A step is 'Nothing' for a rest, or the
 -- sample index (drums) or scale degree in semitones (pitched sounds).
@@ -271,38 +335,63 @@ defaultSetting p = ParamSetting (paramDefault p) SigNone 0.3 4
 paramActive :: Param -> ParamSetting -> Bool
 paramActive p s = psSignal s /= SigNone || abs (psBase s - paramDefault p) > 1e-6
 
-newTrack :: Int -> Text -> Text -> Source -> Track
-newTrack tid name sound src =
-  Track
-    { trackId = tid
-    , trackName = name
-    , trackSound = sound
-    , trackSource = src
-    , trackChain = []
-    , trackParams = Map.empty
-    , trackMuted = False
-    , trackSolo = False
+newChannel :: Int -> Text -> Text -> Channel
+newChannel cid name sound =
+  Channel
+    { chanId = cid
+    , chanName = name
+    , chanSound = sound
+    , chanParams = Map.empty
+    , chanMuted = False
+    , chanSolo = False
     }
 
-nextTrackId :: Sequence -> Int
-nextTrackId = (+ 1) . maximum . (0 :) . map trackId . seqTracks
+nextChannelId :: Song -> Int
+nextChannelId = (+ 1) . maximum . (0 :) . map chanId . songChannels
 
 nextTransformId :: Track -> Int
 nextTransformId = (+ 1) . maximum . (0 :) . map fst . trackChain
 
-mapTrack :: Int -> (Track -> Track) -> Sequence -> Sequence
-mapTrack tid f sq = sq {seqTracks = map (\t -> if trackId t == tid then f t else t) (seqTracks sq)}
+-- | Add a channel after the others, with a part in one sequence.
+addChannel :: Int -> Channel -> Part -> Song -> Song
+addChannel sid ch part song =
+  mapSequence sid (\sq -> sq {seqParts = Map.insert (chanId ch) part (seqParts sq)}) song {songChannels = songChannels song <> [ch]}
 
--- | A copy of a track placed after it, with a fresh id.
-duplicateTrack :: Int -> Sequence -> (Sequence, Maybe Int)
-duplicateTrack tid sq = case break ((== tid) . trackId) (seqTracks sq) of
-  (before, t : after) ->
-    let fresh = nextTrackId sq
-     in (sq {seqTracks = before <> [t, t {trackId = fresh, trackName = trackName t <> " copy", trackSolo = False}] <> after}, Just fresh)
-  _ -> (sq, Nothing)
+-- | Remove a channel, and its part from every sequence.
+removeChannel :: Int -> Song -> Song
+removeChannel cid song =
+  song
+    { songChannels = filter ((/= cid) . chanId) (songChannels song)
+    , songSequences = [sq {seqParts = Map.delete cid (seqParts sq)} | sq <- songSequences song]
+    }
+
+-- | Change a channel as a sequence plays it. The channel's settings change
+-- in every sequence; the part changes only in this one, and a channel
+-- without a part here gets one only when the part itself changes.
+mapTrack :: Int -> Int -> (Track -> Track) -> Song -> Song
+mapTrack sid cid f song = case (findSequence sid song, find ((== cid) . chanId) (songChannels song)) of
+  (Just sq, Just ch) ->
+    let t = f (channelTrack sq ch)
+        shown = Map.findWithDefault emptyPart cid (seqParts sq)
+        part = Part (trackSource t) (trackChain t)
+        ch' = ch {chanName = trackName t, chanSound = trackSound t, chanParams = trackParams t, chanMuted = trackMuted t, chanSolo = trackSolo t}
+        song' = song {songChannels = map (\c -> if chanId c == cid then ch' else c) (songChannels song)}
+     in if part == shown then song' else mapSequence sid (\s -> s {seqParts = Map.insert cid part (seqParts s)}) song'
+  _ -> song
+
+-- | A copy of a channel placed after it, with a fresh id, playing the
+-- original's part in this sequence only.
+duplicateTrack :: Int -> Int -> Song -> (Song, Maybe Int)
+duplicateTrack sid cid song = case break ((== cid) . chanId) (songChannels song) of
+  (before, ch : after) ->
+    let fresh = nextChannelId song
+        copy = ch {chanId = fresh, chanName = chanName ch <> " copy", chanSolo = False}
+        copyPart sq = sq {seqParts = maybe id (Map.insert fresh) (Map.lookup cid (seqParts sq)) (seqParts sq)}
+     in (mapSequence sid copyPart song {songChannels = before <> [ch, copy] <> after}, Just fresh)
+  _ -> (song, Nothing)
 
 newSequence :: Int -> Text -> Sequence
-newSequence sid name = Sequence {seqId = sid, seqName = name, seqCycles = 4, seqTracks = []}
+newSequence sid name = Sequence {seqId = sid, seqName = name, seqCycles = 4, seqParts = Map.empty}
 
 nextSequenceId :: Song -> Int
 nextSequenceId = (+ 1) . maximum . (0 :) . map seqId . songSequences
@@ -373,59 +462,53 @@ blankSong :: Song
 blankSong =
   Song
     { songCps = 0.5625
-    , songSequences = [(newSequence 1 "sequence 1") {seqTracks = [newTrack 1 "kick" "bd" (Steps (replicate 16 Nothing))]}]
+    , songChannels = [newChannel 1 "kick" "bd"]
+    , songSequences = [(newSequence 1 "sequence 1") {seqParts = Map.fromList [(1, emptyPart)]}]
     , songPlaylist = []
     }
 
 -- | The song LunarCycles opens with. Its groove is a four-on-the-floor
 -- kick that doubles every fourth cycle, a euclidean snare spread across the
 -- stereo field, hats with a swept filter, and a bass line in mini-notation.
--- An intro of hats and a filtered bass leads into it, and a two-cycle break
+-- An intro of hats and a sparser bass leads into it, and a two-cycle break
 -- splits it in two and fills its last two cycles.
 demoSong :: Song
 demoSong =
   Song
     { songCps = 0.5625
+    , songChannels =
+        [ (newChannel 1 "kick" "bd") {chanParams = Map.fromList [(Gain, (defaultSetting Gain) {psBase = 1.1})]}
+        , (newChannel 2 "snare" "sn") {chanParams = Map.fromList [(Room, (defaultSetting Room) {psBase = 0.25})]}
+        , (newChannel 3 "hats" "hh")
+            { chanParams =
+                Map.fromList
+                  [ (Cutoff, ParamSetting 3000 SigSine 0.35 4)
+                  , (Gain, (defaultSetting Gain) {psBase = 0.85})
+                  , (Pan, ParamSetting 0.5 SigTri 0.4 2)
+                  ]
+            }
+        , (newChannel 4 "bass" "superpiano") {chanParams = Map.fromList [(Cutoff, ParamSetting 900 SigSaw 0.25 8)]}
+        , newChannel 5 "clap" "cp"
+        ]
     , songSequences =
-        [ Sequence 1 "groove" 4
-            [ (newTrack 1 "kick" "bd" (Steps (concat (replicate 4 [Just 0, Nothing, Nothing, Nothing]))))
-                { trackChain = [(1, Every 4 (Fast 2))]
-                , trackParams = Map.fromList [(Gain, (defaultSetting Gain) {psBase = 1.1})]
-                }
-            , (newTrack 2 "snare" "sn" (Euclid 3 8 2 0))
-                { trackChain = [(1, Jux Rev)]
-                , trackParams = Map.fromList [(Room, (defaultSetting Room) {psBase = 0.25})]
-                }
-            , hats
-                { trackChain = [(1, Degrade 0.25), (2, Every 3 Rev)]
-                , trackParams =
-                    Map.fromList
-                      [ (Cutoff, ParamSetting 3000 SigSine 0.35 4)
-                      , (Gain, (defaultSetting Gain) {psBase = 0.85})
-                      , (Pan, ParamSetting 0.5 SigTri 0.4 2)
-                      ]
-                }
-            , (newTrack 4 "bass" "superpiano" (Mini "0 [~ 0] <3 5> [7 ~ 12 ~]"))
-                { trackChain = [(1, Off 0.125 (Fast 2))]
-                , trackParams = Map.fromList [(Cutoff, ParamSetting 900 SigSaw 0.25 8)]
-                }
-            ]
-        , Sequence 2 "intro" 4
-            [ hats
-                { trackChain = [(1, Every 3 Rev)]
-                , trackParams = Map.fromList [(Cutoff, ParamSetting 1200 SigSaw 0.3 4), (Gain, (defaultSetting Gain) {psBase = 0.8})]
-                }
-            , (newTrack 4 "bass" "superpiano" (Mini "0 ~ ~ 0 ~ ~ <3 5> ~"))
-                { trackParams = Map.fromList [(Cutoff, (defaultSetting Cutoff) {psBase = 500})]
-                }
-            ]
-        , Sequence 3 "break" 2
-            [ newTrack 1 "kick" "bd" (Steps [Just 0, Nothing, Nothing, Nothing, Nothing, Nothing, Just 0, Nothing])
-            , (newTrack 2 "snare" "sn" (Euclid 5 8 0 0))
-                { trackChain = [(1, Sometimes (Ply 2))]
-                }
-            , newTrack 3 "clap" "cp" (Steps [Nothing, Just 0, Nothing, Just 0])
-            ]
+        [ Sequence 1 "groove" 4 $
+            Map.fromList
+              [ (1, Part (Steps (concat (replicate 4 [Just 0, Nothing, Nothing, Nothing]))) [(1, Every 4 (Fast 2))])
+              , (2, Part (Euclid 3 8 2 0) [(1, Jux Rev)])
+              , (3, Part hats [(1, Degrade 0.25), (2, Every 3 Rev)])
+              , (4, Part (Mini "0 [~ 0] <3 5> [7 ~ 12 ~]") [(1, Off 0.125 (Fast 2))])
+              ]
+        , Sequence 2 "intro" 4 $
+            Map.fromList
+              [ (3, Part hats [(1, Every 3 Rev)])
+              , (4, Part (Mini "0 ~ ~ 0 ~ ~ <3 5> ~") [])
+              ]
+        , Sequence 3 "break" 2 $
+            Map.fromList
+              [ (1, Part (Steps [Just 0, Nothing, Nothing, Nothing, Nothing, Nothing, Just 0, Nothing]) [])
+              , (2, Part (Euclid 5 8 0 0) [(1, Sometimes (Ply 2))])
+              , (5, Part (Steps [Nothing, Just 0, Nothing, Just 0]) [])
+              ]
         ]
     , songPlaylist =
         [ Clip 1 2 0 0 4
@@ -436,4 +519,4 @@ demoSong =
         ]
     }
   where
-    hats = newTrack 3 "hats" "hh" (Steps (concat (replicate 2 [Just 0, Nothing, Just 2, Nothing, Just 0, Nothing, Just 0, Just 1])))
+    hats = Steps (concat (replicate 2 [Just 0, Nothing, Just 2, Nothing, Just 0, Nothing, Just 0, Just 1]))
