@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Control.Monad (unless)
+import Control.Monad (forM_, unless, void)
 import Data.ByteString.Builder qualified as B
 import Data.ByteString.Lazy qualified as BL
 import Data.IORef
@@ -8,7 +8,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
-import Data.List (find, sort)
+import Data.List (find, nub, sort)
 import Lunar.Codegen (codeText, songCode, sourceMini)
 import Lunar.Compile (Compiled (..), arrangeSong, byChannel, cError, compileSequence, eventsIn)
 import Lunar.Model
@@ -16,8 +16,8 @@ import Lunar.Project (songFromText, songToText)
 import Lunar.Refactor
 import Lunar.Sampler
 import GHC.Clock (getMonotonicTime)
-import Sound.Tidal.Pattern (Value (..), eventHasOnset, wholeStart)
-import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removePathForcibly)
+import Sound.Tidal.Pattern (EventF (..), Value (..), eventHasOnset, wholeStart)
+import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, listDirectory, removePathForcibly)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
 
@@ -130,6 +130,7 @@ main = do
       check "a first-format song keeps each sequence's rhythm" (map sourceMini (filter ((== "bass") . trackName) (concatMap (sequenceTracks old) (songSequences old))) == ["0 3", "7"])
     Left e -> check ("a first-format song reads: " <> e) False
   samplerChecks check
+  exampleChecks check
   n <- readIORef failures
   unless (n == 0) exitFailure
 
@@ -172,7 +173,7 @@ samplerChecks check = do
       back <- render [("speed", VF (-1))]
       check "negative speed plays backwards" (abs (sounding back - 4800) < 30)
       half <- render [("begin", VF 0.5)]
-      check "begin skips into the sample, fading in" (abs (sounding half - 2400) < 30 && fst (head half) == 0)
+      check "begin skips into the sample, fading in" (abs (sounding half - 2400) < 30 && take 1 (map fst half) == [0])
       shaped <- render [("shape", VF 0.5)]
       check "shape distorts as SuperDirt's does" (near (fst (shaped !! 100)) 0.212)
       open <- render [("n", VF 2)]
@@ -196,6 +197,34 @@ samplerChecks check = do
       check "sounds without samples are listed" (missing == ["superpiano"])
       closeSampler smp
   removePathForcibly bank
+
+-- | The example song and its sample folder: the song reads and compiles,
+-- every sound it plays has a folder, and every file in the folder sounds.
+exampleChecks :: (Text -> Bool -> IO ()) -> IO ()
+exampleChecks check = do
+  let dir = "examples" </> "synth-percussion"
+      samples = dir </> "samples"
+  songFromText <$> T.readFile (dir </> "synth-percussion.lunar") >>= \case
+    Left e -> check ("the example song reads: " <> e) False
+    Right song -> do
+      let comps = concatMap snd (arrangeSong song)
+          played = nub [s | c <- comps, e <- eventsIn 0 (fromIntegral (songLength song)) (cPattern c), eventHasOnset e, Just (VS s) <- [Map.lookup "s" (value e)]]
+      check "the example compiles" (all ((== Nothing) . cError) comps)
+      sounds <- listDirectory samples
+      check ("every sound the example plays has samples: " <> T.pack (show played)) (all (`elem` sounds) played)
+      offlineSampler 48000 samples >>= \case
+        Left e -> check ("the example's samples open: " <> e) False
+        Right smp -> do
+          forM_ (filter (`notElem` ["LICENSE", "readme.txt"]) sounds) $ \sound -> do
+            files <- listDirectory (samples </> sound)
+            forM_ [0 .. length files - 1] $ \i -> do
+              now <- getMonotonicTime
+              playEvent smp now (Map.fromList [("s", VS sound), ("n", VF (fromIntegral i))])
+              out <- renderFrames smp 2400
+              check ("the example's " <> T.pack sound <> ":" <> T.pack (show i) <> " sounds") (any ((> 1e-3) . abs . fst) out)
+              -- Let it ring out, so the next file is heard alone.
+              void (renderFrames smp (3 * 48000))
+          closeSampler smp
 
 -- | A 16-bit PCM WAV file of interleaved samples between -1 and 1.
 wav :: Int -> Int -> [Double] -> BL.ByteString
