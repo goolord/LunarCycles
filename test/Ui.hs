@@ -5,6 +5,7 @@ module Main (main) where
 import Control.Monad (unless, void)
 import Data.IORef
 import Data.List (find, sortOn)
+import Data.Maybe (listToMaybe)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -83,10 +84,10 @@ main = do
             mapM_ frame [p, rel]
             idle
           Nothing -> check ("overlay control " <> t) False
-      drag from to = do
+      dragFrames from to =
         let midway = V2 ((v2X from + v2X to) / 2) ((v2Y from + v2Y to) / 2)
-        mapM_ frame [pressAt base from, holdAt base midway, holdAt base to, holdAt base to, releaseAt (holdAt base to)]
-        idle
+         in [pressAt base from, holdAt base midway, holdAt base to, holdAt base to, releaseAt (holdAt base to)]
+      drag from to = mapM_ frame (dragFrames from to) >> idle
       track name = find ((== name) . trackName) . songTracks <$> readIORef songRef
       gainOf = maybe 1 (psBase . Map.findWithDefault (defaultSetting Gain) Gain . trackParams)
   idle
@@ -257,12 +258,12 @@ main = do
 
   -- Reset layout puts the panes back, and the old arrangement stays gone.
   resetSpans <- collectTextSpans ctx2
-  case find (\(_, txt, _, _, _) -> txt == "Reset layout") resetSpans of
-    Just (r, _, _, _, _) -> do
+  case spanRectOf "Reset layout" resetSpans of
+    Just r -> do
       let (p, rel) = clickPair base (spanCenter r)
       mapM_ frame2 [p, rel, base, base, base]
       afterReset <- collectTextSpans ctx2
-      let titleAt t = (\(Rect x _ _ _, _, _, _, _) -> x) <$> find (\(_, txt, _, _, _) -> txt == t) afterReset
+      let titleAt t = listToMaybe (spanXOf t afterReset)
       savedReset <- loadLayout
       check ("Reset layout restores the default panes: " <> T.pack (show (titleAt "Tracks", titleAt "Code"))) $
         maybe False (< 100) (titleAt "Tracks") && maybe False (> 1000) (titleAt "Code")
@@ -280,11 +281,9 @@ main = do
       let frame3 inp = void (runFrame ctx3 inp (void (lunarView env3)))
       mapM_ frame3 [base, base, base]
       ss <- collectTextSpans ctx3
-      case find (\(_, txt, _, _, _) -> txt == title) ss of
-        Just (r, _, _, _, _) -> do
-          let from = spanCenter r
-              midway = V2 ((v2X from + v2X target) / 2) ((v2Y from + v2Y target) / 2)
-          mapM_ frame3 [pressAt base from, holdAt base midway, holdAt base target, holdAt base target, releaseAt (holdAt base target), base, base]
+      case spanRectOf title ss of
+        Just r -> do
+          mapM_ frame3 (dragFrames (spanCenter r) target <> [base, base])
           moved <- loadLayout
           check ("dragging " <> title <> " in a cramped layout moves it: " <> T.pack (show moved)) (moved /= Just cramped)
         Nothing -> check ("found " <> title <> " in a cramped layout") False)

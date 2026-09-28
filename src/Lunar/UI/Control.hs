@@ -5,6 +5,7 @@ module Lunar.UI.Control
   , fitText
   , wrappedText
   , popupSurface
+  , stripe
   ) where
 
 import Control.Monad (when, void)
@@ -49,10 +50,16 @@ wrappedText layout text = void (richTextWith (layout . fillW) [inlineText text])
 
 popupSurface :: Theme -> Theme
 popupSurface th =
-  let bg = colorRGBA 30 45 60 255
-      edge = colorRGBA 120 146 169 255
+  let bg = styleBg (themeFloatingWindow th)
+      edge = styleBorder (themeFloatingWindow th)
    in (panelStyle (background bg . borderColor edge) . windowStyle (background bg . borderColor edge))
         th {themeShadow = colorRGBA 3 7 14 220}
+
+-- | A thin bar of a track's colour down the side of whatever it marks.
+stripe :: Float -> Float -> Color -> NanoUI ()
+stripe width radius col =
+  styled (panelStyle (background col . borderWidth 0 . cornerRadius radius)) $
+    panelWith (fixedW width . fillH . tight) (pure ())
 
 focusCanvas :: CanvasConfig -> (Rect -> CanvasM ()) -> NanoUI Response
 focusCanvas cfg draw = do

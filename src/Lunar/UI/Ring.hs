@@ -109,20 +109,17 @@ ring cps now playing selected lanes = do
 -- the cycle count to read over it.
 moonPhase :: V2 -> Float -> Double -> Color -> CanvasM ()
 moonPhase c rad phase col = when (rad > 8) $ do
-  let p = realToFrac (phase - fromIntegral (floor phase :: Int)) :: Float
-      waxing = p < 0.5
+  let p = realToFrac phase :: Float
+      -- Waxing lights the right half, waning the left.
+      side = if p < 0.5 then 1 else -1
       k = cos (2 * pi * p)
-      side = if waxing then 1 else -1
-      samples = 40 :: Int
-      ys = [rad * (2 * fromIntegral j / fromIntegral samples - 1) | j <- [0 .. samples]]
-      halfW y = sqrt (max 0 (rad * rad - y * y))
-      at x y = V2 (v2X c + side * x) (v2Y c + y)
-      limb = [at (halfW y) y | y <- ys]
-      terminator = [at (k * halfW y) y | y <- reverse ys]
-      lighted = 1 - k
+      limb = P.arc c rad (-pi / 2) (side * pi)
+      -- The terminator runs back up an ellipse as wide as |k| of the disc,
+      -- on the lit side while the moon is less than half lit.
+      terminator = P.ellipticalArc c (V2 (abs k * rad) rad) 0 (pi / 2) (if k >= 0 then -side * pi else side * pi)
       silver = lerpColor col (colorRGBA 255 255 255 255) 0.6
   drawPath (P.circle c rad) (withAlpha silver 0.04)
   drawStrokePath (P.arc c rad 0 (2 * pi)) 1 (withAlpha silver 0.14)
-  when (lighted > 0.01) $ do
-    drawPathWith P.NonZero (P.polygon (limb <> terminator)) (P.Solid (withAlpha silver 0.13))
-    drawStrokePath (P.arc c rad (if waxing then -pi / 2 else pi / 2) pi) 1.5 (withAlpha col 0.7)
+  when (k < 0.99) $ do
+    drawPathWith P.NonZero (limb <> terminator <> P.close) (P.Solid (withAlpha silver 0.13))
+    drawStrokePath limb 1.5 (withAlpha col 0.7)
