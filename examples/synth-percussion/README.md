@@ -19,10 +19,14 @@ The kit's files are laid out as Dirt-Samples is, one folder per sound, so
 | `shaker` | short and long shaker         |
 | `claves` | claves                        |
 
-The song plays an intro, a groove with a crash on its first cycle, and a tom
-fill, twice over.
+The song plays an intro, then twice over a groove with a crash on its first
+cycle and a tom fill.
 
 ## Playing it
+
+The WAV files are kept in Git LFS. Without `git lfs` installed when you
+clone, they are small pointer files the sampler cannot play: install it and
+run `git lfs pull`.
 
 1. Choose **Output ▾ → Samples → Choose folder…** and pick
    `examples/synth-percussion/samples`.

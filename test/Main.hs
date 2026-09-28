@@ -1,8 +1,9 @@
 module Main (main) where
 
-import Control.Monad (forM_, unless, void)
+import Control.Monad (filterM, forM_, unless)
 import Data.ByteString.Builder qualified as B
 import Data.ByteString.Lazy qualified as BL
+import Data.Char (toLower)
 import Data.IORef
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -17,9 +18,9 @@ import Lunar.Refactor
 import Lunar.Sampler
 import GHC.Clock (getMonotonicTime)
 import Sound.Tidal.Pattern (EventF (..), Value (..), eventHasOnset, wholeStart)
-import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, listDirectory, removePathForcibly)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, getTemporaryDirectory, listDirectory, removePathForcibly)
 import System.Exit (exitFailure)
-import System.FilePath ((</>))
+import System.FilePath (takeExtension, (</>))
 
 main :: IO ()
 main = do
@@ -210,21 +211,20 @@ exampleChecks check = do
       let comps = concatMap snd (arrangeSong song)
           played = nub [s | c <- comps, e <- eventsIn 0 (fromIntegral (songLength song)) (cPattern c), eventHasOnset e, Just (VS s) <- [Map.lookup "s" (value e)]]
       check "the example compiles" (all ((== Nothing) . cError) comps)
-      sounds <- listDirectory samples
-      check ("every sound the example plays has samples: " <> T.pack (show played)) (all (`elem` sounds) played)
-      offlineSampler 48000 samples >>= \case
-        Left e -> check ("the example's samples open: " <> e) False
-        Right smp -> do
-          forM_ (filter (`notElem` ["LICENSE", "readme.txt"]) sounds) $ \sound -> do
-            files <- listDirectory (samples </> sound)
-            forM_ [0 .. length files - 1] $ \i -> do
+      sounds <- filterM (doesDirectoryExist . (samples </>)) =<< listDirectory samples
+      check ("every sound the example plays has samples: " <> T.pack (show played)) (not (null played) && all (`elem` sounds) played)
+      forM_ sounds $ \sound -> do
+        files <- filter ((== ".wav") . map toLower . takeExtension) <$> listDirectory (samples </> sound)
+        forM_ [0 .. length files - 1] $ \i ->
+          -- A sampler of its own, so each file is heard alone.
+          offlineSampler 48000 samples >>= \case
+            Left e -> check ("the example's samples open: " <> e) False
+            Right smp -> do
               now <- getMonotonicTime
               playEvent smp now (Map.fromList [("s", VS sound), ("n", VF (fromIntegral i))])
               out <- renderFrames smp 2400
               check ("the example's " <> T.pack sound <> ":" <> T.pack (show i) <> " sounds") (any ((> 1e-3) . abs . fst) out)
-              -- Let it ring out, so the next file is heard alone.
-              void (renderFrames smp (3 * 48000))
-          closeSampler smp
+              closeSampler smp
 
 -- | A 16-bit PCM WAV file of interleaved samples between -1 and 1.
 wav :: Int -> Int -> [Double] -> BL.ByteString
