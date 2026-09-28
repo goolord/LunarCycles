@@ -217,13 +217,17 @@ sendNote :: OutputDeviceID -> MidiState -> (Double, MidiNote) -> IO MidiState
 sendNote dev ms (delay, n) = do
   let at = max 0.0005 delay
       ch = mnChannel n
+      -- Euterpea's queue does not keep the order of messages due at the same
+      -- moment, and an NRPN only reads in order, so each message is a
+      -- microsecond behind the one before.
+      step i = at + fromIntegral (i :: Int) * 1e-6
   programs <- case mnProgram n of
     Just p | Map.lookup ch (msPrograms ms) /= Just p -> do
       deliverMidiEvent dev (at, Std (ProgramChange ch p))
       pure (Map.insert ch p (msPrograms ms))
     _ -> pure (msPrograms ms)
-  forM_ (mnControls n) $ \(cc, v) -> deliverMidiEvent dev (at, Std (ControlChange ch cc v))
-  deliverMidiEvent dev (at, ANote ch (mnKey n) (mnVelocity n) (mnSeconds n))
+  forM_ (zip [1 ..] (mnControls n)) $ \(i, (cc, v)) -> deliverMidiEvent dev (step i, Std (ControlChange ch cc v))
+  deliverMidiEvent dev (step (length (mnControls n) + 1), ANote ch (mnKey n) (mnVelocity n) (mnSeconds n))
   pure ms {msPrograms = programs}
 
 midiOutputs :: Engine -> IO [MidiOut]

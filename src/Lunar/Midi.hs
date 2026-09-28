@@ -39,8 +39,8 @@ data MidiNote = MidiNote
     -- ^ The General MIDI program a melodic channel needs.
   , mnInstrument :: !InstrumentName
   , mnControls :: ![(Int, Int)]
-    -- ^ Controller values sent before the note: pan (10), brightness (74),
-    -- resonance (71) and reverb send (91).
+    -- ^ Controller values sent before the note, in order: the filter, then on
+    -- melodic channels pan (10) and reverb send (91).
   }
   deriving (Show)
 
@@ -58,14 +58,14 @@ eventNote cps channel e = do
   let gain = num "gain" 1
       vel = clampI 1 127 (round (100 * gain ** 1.3))
       secs = max 0.03 (fromRational (wholeStop e - wholeStart e) / cps)
+      filt = filterControls (num "cutoff" 20000) (num "resonance" 0)
       controls =
-        [(10, clampI 0 127 (round (num "pan" 0.5 * 127)))]
-          <> [(74, cutoffCC c) | Just c <- [lookupNum "cutoff"]]
-          <> [(71, clampI 0 127 (round (r / 0.9 * 127))) | Just r <- [lookupNum "resonance"]]
+        filt
+          <> [(10, clampI 0 127 (round (num "pan" 0.5 * 127)))]
           <> [(91, clampI 0 127 (round (r * 127))) | Just r <- [lookupNum "room"]]
   case soundVoice snd' of
     Drum ps ->
-      pure (MidiNote 9 (fromEnum ps + 35) vel (min secs 0.25) Nothing Percussion [])
+      pure (MidiNote 9 (fromEnum ps + 35) vel (min secs 0.25) Nothing Percussion filt)
     Melodic inst root -> do
       let degree = fromMaybe (num "n" 0) (lookupNum "note")
           speed = num "speed" 1
@@ -77,7 +77,29 @@ eventNote cps channel e = do
     vm = value e
     lookupNum k = Map.lookup k vm >>= valueDouble
     num k d = fromMaybe d (lookupNum k)
-    cutoffCC c = clampI 0 127 (round (logBase (20000 / 50) (max 50 c / 50) * 127))
+
+-- | The low-pass filter at a cutoff in Hz and a resonance in SuperDirt's 0 to
+-- 0.9. Every note carries it, even at the defaults, so a channel does not keep
+-- the last track's filter. Brightness (74) and resonance (71) are for
+-- hardware synths; FluidSynth ignores them, so the same values also go as
+-- SoundFont NRPNs, which offset the preset's filter generators: cutoff (8) in
+-- cents from the usual unfiltered 13500, resonance (9) in centibels.
+filterControls :: Double -> Double -> [(Int, Int)]
+filterControls cutoff res =
+  [ (74, clampI 0 127 (round (logBase (20000 / 50) (max 50 cutoff / 50) * 127)))
+  , (71, clampI 0 127 (round (res / 0.9 * 127)))
+  ]
+    <> sfNrpn 8 (round ((cents - 13500) / 2))
+    <> sfNrpn 9 (round (res / 0.9 * 240))
+  where
+    cents = 1200 * logBase 2 (max 50 cutoff / 8.176)
+
+-- | A SoundFont 2 NRPN: select generator @gen@ and offset it by @steps@ of the
+-- generator's own unit (2 cents for cutoff, 1 centibel for resonance).
+sfNrpn :: Int -> Int -> [(Int, Int)]
+sfNrpn gen steps =
+  let v = clampI 0 16383 (8192 + steps)
+   in [(99, 120), (98, gen), (6, v `div` 128), (38, v `mod` 128)]
 
 clampI :: Int -> Int -> Int -> Int
 clampI lo hi = max lo . min hi
