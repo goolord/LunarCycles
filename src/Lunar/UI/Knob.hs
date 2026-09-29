@@ -7,6 +7,7 @@ module Lunar.UI.Knob
   , formatParam
   ) where
 
+import Control.Monad (when)
 import Data.Text (Text)
 import Lunar.Codegen (showNum)
 import Lunar.Model
@@ -87,6 +88,7 @@ paramKnob col p base sweep live = do
             lo = min from norm
         drawStrokePathWith line (P.arc c r (angleOf lo) (travel * realToFrac (max 0.001 (abs (norm - from))))) (P.Solid (if active then col else themeMuted th))
         drawCircle c (r - 5) face
+        when (cdcFocused cdc) $ drawStrokeCircle c (r + 3) 1.5 (themeFocusRing th)
         drawStrokeAA c (onRing norm (r - 7)) 2 (if active then col else themeMuted th)
         case live of
           Just v -> do

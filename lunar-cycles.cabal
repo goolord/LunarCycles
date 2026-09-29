@@ -49,16 +49,19 @@ library
         Lunar.UI.Editors
         Lunar.UI.Knob
         Lunar.UI.Layout
+        Lunar.UI.Mixer
         Lunar.UI.Palette
         Lunar.UI.Playlist
         Lunar.UI.Ring
         Lunar.UI.Timeline
     build-depends:
         base >=4.20 && <4.23,
+        bytestring ^>=0.12,
         containers >=0.7 && <0.9,
         directory ^>=1.3,
         Euterpea ^>=2.0.7,
         filepath ^>=1.5,
+        network ^>=3.2,
         nano-ui ^>=0.2,
         nano-ui-sdl ^>=0.2,
         process ^>=1.6,

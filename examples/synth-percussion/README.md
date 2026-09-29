@@ -1,8 +1,9 @@
 # Synthesizer percussion
 
-A song for the built-in sampler, with its own kit: FreePats' synthesizer
-percussion, drum sounds in the manner of vintage analog machines, made by
-Roberto with the Yoshimi and Geonkick synthesizers.
+A drum-machine arrangement using the built-in sampler's own kit: FreePats'
+synthesizer percussion, drum sounds in the manner of vintage analog machines,
+made by Roberto with the Yoshimi and Geonkick synthesizers. Its `bass` and
+`keys` tracks add SuperDirt's `bass3` and `superpiano` synths.
 
 The kit's files are laid out as Dirt-Samples is, one folder per sound, so
 `n` (or `bd:1` in mini-notation) picks between the files in a folder:
@@ -32,6 +33,14 @@ run `git lfs pull`.
    finds this project's sibling `samples/` folder automatically.
 2. Switch the transport to **Song** to hear the whole arrangement, or stay
    on **Sequence** to loop the one you are editing.
+
+Press Play to connect the bass and keys to SuperDirt. LunarCycles uses a
+SuperDirt server already listening locally, or starts SuperCollider when the
+`sclang` executable and SuperDirt Quark are installed. If that is unavailable,
+it can fall back to FluidSynth from an installed SoundFont when no MIDI output
+is selected. The synths are not part of the bundled WAV kit, so the Samples
+panel may list them as missing. A selected MIDI output can play them as
+General MIDI patches instead.
 
 The bundled folder is used for this project only. Other projects use your
 chosen sample folder or Dirt-Samples if it is installed. The snare's `room` is

@@ -62,13 +62,13 @@ pane titles, 20 for the product name, and 24–32 for the cycle readout.
 
 ## Composition
 
-Three views share the transport and each give one kind of work the room
+Four views share the transport and each give one kind of work the room
 it needs. A tab row under the transport switches them, as do Ctrl+1, 2 and
-3, and each view keeps its own pane arrangement.
+3 and 4, and each view keeps its own pane arrangement.
 
 ```text
 Project / undo / transport / Sequence·Song / tempo / output
-Arrange   Pattern   Code
+Arrange   Pattern   Code   Mixer
 
 Arrange                      Pattern                      Code
 ┌─────────────────────┐      ┌───────┬─────────────┐      ┌──────────┬──────────┐
@@ -87,11 +87,14 @@ Playback state / what loops / track count / transport shortcut
   full-width editor.
 - Code puts the generated code beside the editor, so a change and the code
   it writes are read together; the track list stays for mute and solo.
+- Mixer puts the shared channels on vertical gain faders, with pan, mute and
+  solo on each strip. Selecting a channel exposes grouped effect controls.
 
 - In Pattern, a listening column occupies 27% of the width. Its circular
   score shows one cycle; the wider timeline compares several.
 - At widths below 1100 logical pixels, the view tabs give way to a tab for
-  each of the six panes, which focus one instrument at a time. Choosing a
+  each of the seven panes, which focus one instrument at a time. Below 600
+  pixels these tabs use two rows so Mixer stays visible. Choosing a
   track opens its editor. Compact navigation preserves the views' saved
   arrangements.
 - Recessed 7-pixel gutters mark draggable boundaries. Pane padding is 16
@@ -236,3 +239,67 @@ view on screen. A pane is dragged by its whole title bar. A pane
 too narrow for its header controls shows only its title and maximize
 button. The arrangement is saved when a drag or resize lets go, and Reset
 layout hands the grid the starting arrangement and forgets the saved one.
+
+## Mixer
+
+Energy 2 / rhythm 2 / motion 2, inherited from the instrument. The reference
+is FL Studio's channel-strip bank: one vertical gain fader per shared channel,
+with pan, mute and solo. Gain uses Tidal's actual multiplier (0 to 1.5, unity
+at 1), with a separate marker when gain is modulated. These are parameter
+positions, not invented peak meters. Playback-driven modulation is the only
+motion.
+
+- The existing track palette connects each strip to its score and timeline.
+  A selected name button and outline identify which channel the controls edit;
+  text also identifies mute, solo and solo exclusion.
+- The existing condensed interface face keeps channel names readable in
+  112-pixel strips; exact gain and pan values retain Input Mono. Long channel
+  and sound names are ellipsized, with their full names in tooltips.
+- Faders come first in each strip so volume stays reachable in short windows.
+  A 44-pixel minimum is used for channel selection, mute/solo, paging and
+  modulation buttons. Faders and knobs have keyboard focus outlines.
+- Controls are grouped by their actual purpose: level/stereo, low-pass filter,
+  effects and sample playback. There is no fixed effect-slot stack. Wide
+  windows place these groups beside the bank to keep them visible while
+  mixing; smaller windows place them below in a vertically scrolling pane.
+- An 8-pixel gap separates strips; 28 pixels separate the bank and controls.
+  Channel banks page when there is not enough width for usable faders. Below
+  600 pixels the pane tabs use two rows, keeping Mixer visible on entry.
+- Gain/pan edits keep modulation intact. All edits use the shared channel
+  model, so undo, saved songs, generated code and every sequence agree.
+  Adjustments affect new events, as the existing playback engine does.
+- Output support is stated in the view: room is SuperDirt reverb or a MIDI
+  reverb send; shape and sample playback controls use Samples or SuperDirt.
+  An empty mixer explains how to add a channel. Pattern errors appear with
+  the selected channel; output loading/errors remain in Output and the status
+  bar. Mixer itself reads in-memory state and has no asynchronous loading step.
+
+### Mixer delivery checks
+
+- PASS, hard gates: Mixer and Ctrl+4 open a working view. All channel data
+  comes from the song. There are no new assets, placeholder meters or
+  fabricated measurements. Native renders at 1600 × 980, 1100 × 800 and
+  400 × 600 keep the content inside its scrolling pane; compact tabs are
+  visible. The app has one established dark theme.
+- PASS, contrast and keyboard: calculated primary/pane contrast is 11.70:1,
+  secondary/pane 5.97:1, primary/hover 7.71:1, and the weakest selected
+  channel-button label 5.47:1. Faders accept arrow keys and show a focus
+  outline; shared knobs also draw a focus outline. Escape closes modulation.
+- PASS, purpose and liveliness: palette, typography, spacing and responsive
+  placement follow the reasons above. Fader banks are the focus, track colour
+  is the identity cue, and live markers show actual parameter signals.
+- PASS, build/runtime: Cabal builds the executable; both test suites pass.
+  SDL screenshot runs, including playback, exit without runtime errors.
+- PASS, scripted headless click-through: Mixer tab and Ctrl+4 open the view;
+  strip selection changes the effects target; fader dragging, wheel and arrows
+  change gain; the fader clamps at 0 and 1.5; right-click restores unity;
+  pan changes stereo position; M/S update shared mute/solo state.
+- PASS, effects click-through: cutoff, resonance, room, shape, speed, begin
+  and end each edit the selected channel; the signal menu selects sine;
+  Done and Escape close it; dragging a modulated fader preserves its signal.
+- PASS, integration and compact state: one drag undoes in one step, redo
+  restores it, edits reach Tidal code and survive save/reopen, and channel
+  edits leave sequence parts intact. Previous/Next reach every channel;
+  scrolling reaches an editable sample-end knob in a 400-pixel window;
+  resizing preserves channel selection. Removing the last channel shows
+  the empty-state instructions.

@@ -11,8 +11,9 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import Lunar.Codegen (codeText, songCode)
-import Lunar.Engine (engineCycle, newEngine, shutdownEngine, enginePlaying)
+import Lunar.Engine (DirtStatus (..), dirtStatus, engineCycle, newEngine, shutdownEngine, enginePlaying)
 import Lunar.Model
+import Lunar.Project (loadSong, saveSong)
 import Lunar.UI (AppEnv (..), Workspace (..), lunarView, newAppEnv, workspaceName)
 import Lunar.UI.Editors (euclidEditor)
 import Lunar.UI.Control (selectField)
@@ -20,6 +21,7 @@ import Lunar.UI.Palette (lunarTheme)
 import Lunar.UI.Playlist (laneCount)
 import GHC.Clock (getMonotonicTime)
 import NanoUI
+import NanoUI.Backend (FontMetrics (..))
 import NanoUI.Testing
 import NanoUI.Testing.Assert (withInput)
 import NanoUI.Testing.Harness
@@ -49,13 +51,13 @@ main = do
   let check name ok = unless ok $ do
         T.putStrLn ("FAIL: " <> name)
         modifyIORef failures (+ 1)
-  -- Saved layouts go to a scratch config directory, not the user's, and
-  -- the sampler finds no Dirt-Samples, so the test opens no audio device.
+  -- Keep test layouts and audio-server startup out of the user's environment.
   tmp <- getTemporaryDirectory
   let config = tmp <> "/lunar-cycles-ui-test"
   createDirectoryIfMissing True config
   setEnv "XDG_CONFIG_HOME" config
   setEnv "XDG_DATA_HOME" config
+  setEnv "LUNAR_CYCLES_DISABLE_AUDIO_AUTOSTART" "1"
   forgetSaved
   eng <- newEngine (songCps demoSong)
   env <- newAppEnv eng
@@ -334,6 +336,7 @@ main = do
       playingSpans <- collectTextSpans ctx
       check "next frame displays Stop" (hasText "■ Stop" playingSpans)
   check "play starts the engine" =<< enginePlaying eng
+  check "headless UI test does not start SuperDirt" . (== DirtOff) =<< dirtStatus eng
   _ <- click "■ Stop"
   check "stop stops the engine" . not =<< enginePlaying eng
 
@@ -512,6 +515,180 @@ main = do
           check "confirming New starts a blank song" . (== blankSong) =<< readIORef songP
         Nothing -> check "found the Project menu" False
     other -> check ("found the playlist grid: " <> T.pack (show other)) False
+
+  chord (ctrl <> key '2')
+  clickTextP "✕"
+  chord (ctrl <> key '4')
+  emptyMixer <- collectTextSpans ctxP
+  check "empty Mixer explains how to add a channel" (any (\(_, txt, _, _, _) -> "No channels to mix." `T.isPrefixOf` txt) emptyMixer)
+
+  envM <- newAppEnv eng
+  rawCtxM <- newContext
+  let metrics = ctxFontMetrics rawCtxM
+      ctxM = withFontMetrics rawCtxM metrics {fmAdvance = \c -> fmAdvance metrics c * 0.55}
+  songM <- newIORef demoSong
+  let frameM inp = void (runFrame ctxM inp (lunarView envM >>= liftIO . writeIORef songM))
+      idleM = mapM_ frameM [base, base, base]
+      chordM c = mapM_ frameM [chordInp c base, base, base]
+      clickM t = do
+        ss <- collectTextSpans ctxM
+        case spanRectOf t ss of
+          Just r -> let (p, rel) = clickPair base (spanCenter r) in mapM_ frameM [p, rel] >> idleM
+          Nothing -> check ("Mixer control " <> t) False
+      channelM name = find ((== name) . chanName) . songChannels <$> readIORef songM
+      valueM name p = maybe (paramDefault p) (psBase . Map.findWithDefault (defaultSetting p) p . chanParams) <$> channelM name
+      canvasBelow t dy = do
+        ss <- collectTextSpans ctxM
+        case spanRectOf t ss of
+          Just r -> do
+            frameM base {inputMousePos = V2 (rectX r + rectW r / 2) (rectY r + rectH r + dy)}
+            getPrevRect ctxM =<< getHotId ctxM
+          Nothing -> pure Nothing
+      dragM r delta = let p = spanCenter r in mapM_ frameM (dragFrames p (V2 (v2X p) (v2Y p + delta))) >> idleM
+  idleM
+  clickM "Mixer"
+  mixerSpans <- collectTextSpans ctxM
+  check "Mixer tab opens faders and grouped channel controls" (all (`hasText` mixerSpans) ["Gain", "Pan", "Channel controls: kick", "Low-pass filter", "Effects", "Sample playback"])
+  fader <- canvasBelow "Gain" 50
+  case fader of
+    Just r | rectH r > 150 -> do
+      before <- readIORef songM
+      gainBefore <- valueM "kick" Gain
+      dragM r (-24)
+      gainAfter <- valueM "kick" Gain
+      check "Mixer fader changes channel gain" (gainAfter > gainBefore)
+      chordM (ctrl <> key 'z')
+      check "a fader drag is one undo step" . (== before) =<< readIORef songM
+      chordM (ctrl <> shift <> key 'z')
+      check "redo restores the mixer edit" . (== gainAfter) =<< valueM "kick" Gain
+      -- Refocus the fader before keyboard input; shortcuts may move focus.
+      let (p, rel) = clickPair base (spanCenter r)
+      mapM_ frameM [p, rel, keyInp KeyDown base, base]
+      check "fader arrow keys lower gain" . (< gainAfter) =<< valueM "kick" Gain
+      let (rp, rr) = rightClickPair base (spanCenter r)
+      mapM_ frameM [rp, rr] >> idleM
+      check "right-click resets the fader to unity" . (== 1) =<< valueM "kick" Gain
+      frameM base {inputMousePos = spanCenter r, inputScroll = V2 0 1}
+      idleM
+      check "scrolling over a fader raises gain" . (> 1) =<< valueM "kick" Gain
+      dragM r (-600)
+      check "fader clamps to its maximum" . (== 1.5) =<< valueM "kick" Gain
+      dragM r 600
+      check "fader reaches zero without going negative" . (== 0) =<< valueM "kick" Gain
+      mapM_ frameM [rp, rr] >> idleM
+    _ -> check "found the Mixer gain fader" False
+  pan <- canvasBelow "Pan" 24
+  case pan of
+    Just r -> do
+      dragM r (-20)
+      check "Mixer pan changes the stereo position" . (> 0.5) =<< valueM "kick" Pan
+    _ -> check "found Mixer pan" False
+  clickM "M"
+  check "Mixer mute changes the shared channel" . maybe False chanMuted =<< channelM "kick"
+  clickM "M"
+  clickM "S"
+  soloSpans <- collectTextSpans ctxM
+  check "Mixer solo identifies excluded channels" (hasText "Excluded" soloSpans)
+  check "Mixer solo changes the shared channel" . maybe False chanSolo =<< channelM "kick"
+  clickM "S"
+  clickM "snare"
+  selectedM <- collectTextSpans ctxM
+  check "selecting a strip opens its effects" (hasText "Channel controls: snare" selectedM)
+  mapM_ (\(caption, param, delta) -> do
+      knobRect <- canvasBelow caption 24
+      case knobRect of
+        Just r -> do
+          before <- valueM "snare" param
+          dragM r delta
+          after <- valueM "snare" param
+          check ("Mixer edits " <> caption) (after /= before)
+        _ -> check ("found Mixer " <> caption <> " knob") False)
+    [("cutoff", Cutoff, 16), ("reso", Resonance, -16), ("room", Room, -16), ("shape", Shape, -16), ("speed", Speed, -16), ("begin", Begin, -16), ("end", End, 16)]
+  editedM <- readIORef songM
+  let snares = [t | sq <- songSequences editedM, t <- sequenceTracks editedM sq, trackName t == "snare"]
+  check "Mixer edits are shared in every sequence without adding parts" $ case snares of
+    t : ts -> all ((== trackParams t) . trackParams) ts && map seqParts (songSequences editedM) == map seqParts (songSequences demoSong)
+    [] -> False
+  check "Mixer effects reach generated Tidal code" ("# shape " `T.isInfixOf` codeText (songCode PlaySequence 1 editedM))
+  savedM <- saveSong (config <> "/mixer.lunar") editedM
+  case savedM of
+    Right path -> check "Mixer edits survive save and reopen" . (== Right editedM) =<< loadSong path
+    Left e -> check ("save Mixer song: " <> e) False
+  clickM "∿ off"
+  modulation <- collectOverlayTextSpans ctxM base
+  check "Mixer signal button opens modulation controls" (all (`hasText` modulation) ["gain modulation", "signal", "depth", "period", "Done"])
+  let clickOverlayM t = do
+        ss <- collectOverlayTextSpans ctxM base
+        case spanRectOf t ss of
+          Just r -> let (p, rel) = clickPair base (spanCenter r) in mapM_ frameM [p, rel] >> idleM
+          Nothing -> check ("Mixer modulation control " <> t) False
+  clickOverlayM "none"
+  clickOverlayM "sine"
+  check "Mixer modulation updates the channel" . maybe False ((== Just SigSine) . fmap psSignal . Map.lookup Gain . chanParams) =<< channelM "snare"
+  clickOverlayM "Done"
+  gainLabels <- collectTextSpans ctxM
+  case [r | (r, txt, _, _, _) <- gainLabels, txt == "Gain"] of
+    _ : r : _ -> do
+      frameM base {inputMousePos = V2 (rectX r + rectW r / 2) (rectY r + rectH r + 50)}
+      target <- getPrevRect ctxM =<< getHotId ctxM
+      case target of
+        Just fr -> do
+          before <- valueM "snare" Gain
+          dragM fr (-12)
+          check "modulated fader still edits its base" . (> before) =<< valueM "snare" Gain
+          check "fader preserves its modulation signal" . maybe False ((== Just SigSine) . fmap psSignal . Map.lookup Gain . chanParams) =<< channelM "snare"
+        Nothing -> check "found modulated fader" False
+    _ -> check "found snare gain label" False
+  clickM "∿ sine"
+  mapM_ frameM [keyInp KeyEscape base, base, base]
+  closedM <- collectOverlayTextSpans ctxM base
+  check "Escape closes Mixer modulation" (not (hasText "gain modulation" closedM))
+
+  let compactM = withInput 400 700
+      idleCompactM = mapM_ frameM [compactM, compactM, compactM]
+      clickCompactM t = do
+        ss <- collectTextSpans ctxM
+        case spanRectOf t ss of
+          Just r -> let (p, rel) = clickPair compactM (spanCenter r) in mapM_ frameM [p, rel] >> idleCompactM
+          Nothing -> check ("compact Mixer control " <> t) False
+  mapM_ frameM [chordInp (ctrl <> key '4') compactM, compactM, compactM]
+  compactMixer <- collectTextSpans ctxM
+  check "Ctrl+4 opens Mixer in compact navigation" (hasText "Gain" compactMixer)
+  check "compact Mixer pages channels to fit" (hasText "Next" compactMixer && hasText "1-2 / 5" compactMixer)
+  clickCompactM "Next"
+  secondBank <- collectTextSpans ctxM
+  check "Next reveals the next bank of channels" (all (`hasText` secondBank) ["hats", "bass", "3-4 / 5"] && not (hasText "kick" secondBank))
+  clickCompactM "Next"
+  lastBank <- collectTextSpans ctxM
+  check "Next reaches the final channel" (all (`hasText` lastBank) ["clap", "5-5 / 5"])
+  clickCompactM "clap"
+  pickedCompact <- collectTextSpans ctxM
+  check "compact strip selection stays in Mixer" (hasText "Gain" pickedCompact && not (hasText "Rhythm" pickedCompact))
+  mapM_ frameM [compactM {inputMousePos = V2 340 500, inputScroll = V2 0 30}, compactM, compactM]
+  compactEffects <- collectTextSpans ctxM
+  case spanRectOf "end" compactEffects of
+    Just r -> do
+      let at = V2 (rectX r + rectW r / 2) (rectY r + rectH r + 24)
+      frameM compactM {inputMousePos = at}
+      target <- getPrevRect ctxM =<< getHotId ctxM
+      case target of
+        Just kr -> do
+          let p = spanCenter kr
+              q = V2 (v2X p) (v2Y p + 16)
+          mapM_ frameM [pressAt compactM p, holdAt compactM q, releaseAt (holdAt compactM q)]
+          idleCompactM
+          check "compact Mixer scrolls to working effect controls" . (< 1) =<< valueM "clap" End
+        Nothing -> check "compact effect knob is reachable" False
+    Nothing -> check "compact effects are reachable by scrolling" False
+  mapM_ frameM [compactM {inputMousePos = V2 340 500, inputScroll = V2 0 (-30)}, compactM, compactM]
+  clickCompactM "Previous"
+  clickCompactM "Previous"
+  firstBank <- collectTextSpans ctxM
+  check "Previous returns to first bank" (hasText "kick" firstBank)
+  mapM_ frameM [base, base, base]
+  wideMixer <- collectTextSpans ctxM
+  check "resizing Mixer restores desktop strips" (all (`hasText` wideMixer) ["kick", "snare", "hats", "bass", "clap"])
+  check "compact selection carries into desktop effects" (hasText "Channel controls: clap" wideMixer)
 
   n <- readIORef failures
   shutdownEngine eng

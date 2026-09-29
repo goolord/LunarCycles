@@ -10,6 +10,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
 import Data.List (find, nub, sort)
+import Lunar.Catalog (isPitched)
 import Lunar.Codegen (codeText, songCode, sourceMini)
 import Lunar.Compile (Compiled (..), arrangeSong, byChannel, cError, compileSequence, eventsIn)
 import Lunar.Model
@@ -209,7 +210,7 @@ samplerChecks check = do
   removePathForcibly projectDir
 
 -- | The example song and its sample folder: the song reads and compiles,
--- every sound it plays has a folder, and every file in the folder sounds.
+-- sample sounds have files, and its other sounds are stock pitched synths.
 exampleChecks :: (Text -> Bool -> IO ()) -> IO ()
 exampleChecks check = do
   let dir = "examples" </> "synth-percussion"
@@ -221,7 +222,10 @@ exampleChecks check = do
           played = nub [s | c <- comps, e <- eventsIn 0 (fromIntegral (songLength song)) (cPattern c), eventHasOnset e, Just (VS s) <- [Map.lookup "s" (value e)]]
       check "the example compiles" (all ((== Nothing) . cError) comps)
       sounds <- filterM (doesDirectoryExist . (samples </>)) =<< listDirectory samples
-      check ("every sound the example plays has samples: " <> T.pack (show played)) (not (null played) && all (`elem` sounds) played)
+      let synths = filter (isPitched . T.pack) played
+          unsupported = filter (\s -> s `notElem` sounds && not (isPitched (T.pack s))) played
+      check ("the example plays bundled samples and stock synths: " <> T.pack (show played)) (any (`elem` sounds) played && null unsupported)
+      check "the example uses bass3 and superpiano" (all (`elem` synths) ["bass3", "superpiano"])
       forM_ sounds $ \sound -> do
         files <- filter ((== ".wav") . map toLower . takeExtension) <$> listDirectory (samples </> sound)
         forM_ [0 .. length files - 1] $ \i ->

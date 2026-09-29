@@ -1,9 +1,9 @@
--- | The LunarCycles window: transport along the top, tabs for its three
+-- | The LunarCycles window: transport along the top, tabs for its four
 -- views, and below them the view's grid of panes, which the user can drag,
 -- resize, swap and maximize. Arrange centres on the playlist, Pattern on the
 -- editor for the selected track (its rhythm, functions and sound on tabs),
--- and Code on the Tidal code; the ring, timeline and track list appear
--- where they serve the view.
+-- Code on the Tidal code, and Mixer on shared channel controls. The ring,
+-- timeline and track list appear where they serve the view.
 module Lunar.UI
   ( AppEnv (..)
   , Workspace (..)
@@ -39,6 +39,7 @@ import Lunar.UI.Control (selectField, wrappedText)
 import Lunar.UI.Editors
 import Lunar.UI.Knob
 import Lunar.UI.Layout
+import Lunar.UI.Mixer (mixerView)
 import Lunar.UI.Palette
 import Lunar.UI.Playlist
 import Lunar.UI.Ring (ring)
@@ -125,7 +126,7 @@ lunarApp = void . lunarView
 
 -- | What each pane of the grid shows. The pane ids are fixed, so a pane
 -- keeps its content wherever it is dragged.
-data PaneKind = PaneRing | PaneTimeline | PaneTracks | PaneEditor | PaneCode | PanePlaylist
+data PaneKind = PaneRing | PaneTimeline | PaneTracks | PaneEditor | PaneCode | PanePlaylist | PaneMixer
   deriving (Eq, Show, Enum, Bounded)
 
 paneId :: PaneKind -> Word64
@@ -142,9 +143,10 @@ paneTitle = \case
   PaneEditor -> "Editor"
   PaneCode -> "Code"
   PanePlaylist -> "Playlist"
+  PaneMixer -> "Mixer"
 
 -- | The window's views, each a grid of the panes one kind of work needs.
-data Workspace = WsArrange | WsPattern | WsCode
+data Workspace = WsArrange | WsPattern | WsCode | WsMixer
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 workspaceTitle :: Workspace -> Text
@@ -152,6 +154,7 @@ workspaceTitle = \case
   WsArrange -> "Arrange"
   WsPattern -> "Pattern"
   WsCode -> "Code"
+  WsMixer -> "Mixer"
 
 -- | The name a view goes by on the command line and in its layout file.
 workspaceName :: Workspace -> String
@@ -172,6 +175,7 @@ startingLayout = \case
       (Split 12 AxisH 0.36 (pane PaneTimeline) (pane PaneEditor))
   WsCode ->
     Split 30 AxisV 0.50 (pane PaneCode) (Split 31 AxisH 0.62 (pane PaneEditor) (pane PaneTracks))
+  WsMixer -> pane PaneMixer
   where
     pane = Pane . paneId
 
@@ -250,11 +254,17 @@ lunarView env = styled (const lunarTheme) $ do
   (playlistSpan, setPlaylistSpan) <- useState (32 :: Int)
   (selectedId, setSelectedId) <- useState (Nothing :: Maybe Int)
   (editorTab, setEditorTab) <- useState TabRhythm
-  (compactPane, setCompactPane) <- useState PaneEditor
+  (compactPane, setCompactPane) <- useState (if envStartView env == WsMixer then PaneMixer else PaneEditor)
   (workspace, setWorkspace) <- useState (envStartView env)
   (arrangements, setArrangements) <- useState (envLayouts env)
   let arrangement = Map.findWithDefault (startingLayout workspace) workspace arrangements
-      showWorkspace w = when (w /= workspace) (setWorkspace w)
+      showWorkspace w = do
+        when (w /= workspace) (setWorkspace w)
+        when (ww < 1100) $ setCompactPane $ case w of
+          WsArrange -> PanePlaylist
+          WsPattern -> PaneEditor
+          WsCode -> PaneCode
+          WsMixer -> PaneMixer
   forM_ (zip ['1' ..] [minBound .. maxBound]) $ \(k, w) -> whenM (shortcut (ctrl <> key k)) (showWorkspace w)
   let compiled = dCompiled derived
       tracks = sequenceTracks song currentSeq
@@ -466,6 +476,21 @@ lunarView env = styled (const lunarTheme) $ do
                   whenM (buttonWith (fontSize 13 . alignMid . minH 36) "Copy") (setCopied =<< setClipboard (dCodeText derived))
               )
               $ codeView ((,) <$> selected <*> (trackColor th <$> selectedIndex)) (dCode derived)
+          PaneMixer -> frame pctx (paneTitle kind) Nothing $
+            mixerView (max 112 (rectW (pgcRect pctx) - 40)) now compiled selected
+              (\tid -> when (Just tid /= selectedId) (setSelectedId (Just tid))) editTrack $ \i c -> do
+                let t = cTrack c
+                    controls title params = columnWith (tight . gap 10) $ do
+                      labelWith (fontMuted . fontSize 13) title
+                      parameterKnobs params (trackColor th i) now t (editTrack (trackId t)) c
+                rowWith (tight . fillW . wrap . gap 28 . lineGap 20) $ do
+                  controls "Level & stereo" [Gain, Pan]
+                  controls "Low-pass filter" [Cutoff, Resonance]
+                  controls "Effects" [Room, Shape]
+                  controls "Sample playback" [Speed, Begin, End]
+                hint "Drag, scroll or use arrow keys. Right-click resets a control. Signal buttons edit modulation; faders set its base value."
+                hint "Reverb (room) uses SuperDirt or MIDI reverb send. Distortion (shape) uses Samples or SuperDirt. Sample playback controls use Samples or SuperDirt. Changes apply to new events."
+                forM_ (cError c) $ wrappedText (fontDanger . fontSize 12) . ("Pattern error: " <>) . T.takeWhile (/= '\n')
   columnWith (fillW . fillH . tight . gap 0) $ do
     resetLayout <-
       styled flatSurface $
@@ -491,11 +516,14 @@ lunarView env = styled (const lunarTheme) $ do
           [tab w (workspaceTitle w) () | w <- [minBound .. maxBound]]
         showWorkspace next
         flex
-        labelWith (fontMuted . fontSize 12 . alignMid) "Ctrl+1, 2, 3 switch views"
-      else rowWith (padXY 0 4 . tight . fillW) $ do
-        next <- tabBarConfigured defaultTabsConfig {tabsStyle = TabUnderline} compactPane
-          [tab k (paneTitle k) () | k <- [PaneRing, PaneTimeline, PaneTracks, PaneEditor, PaneCode, PanePlaylist]]
-        when (next /= compactPane) (setCompactPane next)
+        labelWith (fontMuted . fontSize 12 . alignMid) "Ctrl+1, 2, 3, 4 switch views"
+      else columnWith (padXY 0 4 . tight . fillW) $ do
+        let panes = [PaneRing, PaneTimeline, PaneTracks, PaneEditor, PaneCode, PanePlaylist, PaneMixer]
+            rows = if ww < 600 then [take 4 panes, drop 4 panes] else [panes]
+        forM_ (zip [0 :: Int ..] rows) $ \(i, ks) -> withKey i $ do
+          next <- tabBarConfigured defaultTabsConfig {tabsStyle = TabUnderline} compactPane
+            [tab k (paneTitle k) () | k <- ks]
+          when (next /= compactPane) (setCompactPane next)
     -- Each view keeps a grid of its own, and with it its maximized pane.
     gridResp <- withKey (if docked then fromEnum workspace else -1) $
       paneGrid
@@ -990,8 +1018,11 @@ convertSource pitched mode t = case (mode, trackSource t) of
        in Euclid (max 1 k) n r v
 
 knobRow :: Color -> Double -> Track -> ((Track -> Track) -> NanoUI ()) -> Compiled -> NanoUI ()
-knobRow col now t update c = rowWith (tight . gap 14 . wrap . lineGap 16) $
-  forM_ allParams $ \p -> withKey (fromEnum p) $ columnWith (tight . gap 6 . fixedW 68 . alignCenter) $ do
+knobRow = parameterKnobs allParams
+
+parameterKnobs :: [Param] -> Color -> Double -> Track -> ((Track -> Track) -> NanoUI ()) -> Compiled -> NanoUI ()
+parameterKnobs params col now t update c = rowWith (tight . gap 14 . wrap . lineGap 16) $
+  forM_ params $ \p -> withKey (fromEnum p) $ columnWith (tight . gap 6 . fixedW 68 . alignCenter) $ do
     let setting = Map.findWithDefault (defaultSetting p) p (trackParams t)
         expr = paramExpr p setting
         sweep = case expr of
@@ -1009,7 +1040,7 @@ knobRow col now t update c = rowWith (tight . gap 14 . wrap . lineGap 16) $
           SigNone -> "off"
           s -> T.toLower (T.drop 3 (tshow s))
     modResp <- styled (if psSignal setting /= SigNone then tinted (const col) else id) $
-      buttonWith' (fixedW 64 . minH 28 . fontSize 12 . alignMid) ("∿ " <> sigName)
+      buttonWith' (fixedW 64 . minH 44 . fontSize 12 . alignMid) ("∿ " <> sigName)
     tooltip modResp "Modulate with a continuous signal"
     when (respClicked modResp) (setOpen (not open))
     (dismiss, edited) <-

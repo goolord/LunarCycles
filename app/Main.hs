@@ -17,7 +17,7 @@ import System.Environment (getArgs)
 import Data.Maybe (isJust, fromMaybe)
 import Text.Read (readMaybe)
 
--- | @lunar-cycles [--play] [--view arrange|pattern|code] [--screenshot FILE
+-- | @lunar-cycles [--play] [--view arrange|pattern|code|mixer] [--screenshot FILE
 -- [--after SECONDS]]@. @--view@ picks the view the window opens on. With
 -- @--screenshot@ the window saves itself as a PNG once the given time has
 -- passed, then closes.
